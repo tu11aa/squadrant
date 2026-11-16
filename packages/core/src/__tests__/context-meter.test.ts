@@ -41,6 +41,16 @@ describe("latestContextFromLines", () => {
     const r = latestContextFromLines([asst("a", 1, 10, 0), asst("b", 2, 50, 0), asst("b", 2, 50, 0)]);
     expect(r?.tokens).toBe(52);
   });
+  const boundary = (post?: number) => JSON.stringify({ type: "system", subtype: "compact_boundary", compactMetadata: { trigger: "manual", preTokens: 136_634, ...(post === undefined ? {} : { postTokens: post }) } });
+  it("a compact boundary after the last usage reports its postTokens", () => {
+    expect(latestContextFromLines([asst("a", 1, 130_000, 0), user, boundary(20_754)])?.tokens).toBe(20_754);
+  });
+  it("usage after the boundary wins", () => {
+    expect(latestContextFromLines([asst("a", 1, 130_000, 0), boundary(20_754), asst("b", 1, 25_000, 0)])?.tokens).toBe(25_001);
+  });
+  it("a boundary without postTokens reads 0, never the pre-compact size", () => {
+    expect(latestContextFromLines([asst("a", 1, 130_000, 0), boundary()])?.tokens).toBe(0);
+  });
   it("skips all-zero (synthetic) usage and returns null when nothing is usable", () => {
     expect(latestContextFromLines([asst("a", 1, 10, 0), asst("s", 0, 0, 0)])?.tokens).toBe(11);
     expect(latestContextFromLines([user])).toBeNull();

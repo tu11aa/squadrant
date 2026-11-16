@@ -45,8 +45,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:1000
   - packages/core/src/daemon/reduce.ts:534
   - packages/core/src/daemon/reduce.ts:591
-  - packages/core/src/daemon/start.ts:110
-  - packages/core/src/daemon/start.ts:114
+  - packages/core/src/daemon/start.ts:111
+  - packages/core/src/daemon/start.ts:115
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
@@ -100,7 +100,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:566
   - packages/cli/src/squadrantd.ts:597
   - packages/core/src/daemon/reduce.ts:792
-  - packages/core/src/daemon/start.ts:422
+  - packages/core/src/daemon/start.ts:436
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`

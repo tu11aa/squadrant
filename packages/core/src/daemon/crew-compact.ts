@@ -93,6 +93,11 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     void Promise.resolve(deps.notify?.(project, `CREW COMPACT DROPPED [${label}] — ${why}. The crew was NOT compacted; re-run 'squadrant crew compact ${project} ${label.split(":")[1]}' when you want it.`)).catch(() => {});
   }
 
+  /** True when the crew still has a live pane (the same lookup `crew compact` uses). */
+  async function hasPane(project: string, name: string): Promise<boolean> {
+    return (await resolveSurface(project, name)) !== null;
+  }
+
   /** Validate and queue; returns once queued (the daemon owns the wait and the typing).
    *  `joined`: a compact was already pending for this crew — this request merged into it. */
   async function request(project: string, name: string, keep?: string): Promise<{ queued: true; agent: string; joined: boolean }> {
@@ -262,5 +267,5 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     } finally { ticking = false; }
   }
 
-  return { request, cancel, tick, holdsCrew, compactBegin, compactDone, pendingCount: () => pending.size };
+  return { request, cancel, tick, holdsCrew, hasPane, compactBegin, compactDone, pendingCount: () => pending.size };
 }

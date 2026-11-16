@@ -1026,15 +1026,28 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 - **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
 - Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
 
-**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+**Crew warning and reuse gate (#1126).** Two tiers on the target crew's context, both in `squadrant crew send` and the MCP `crew_send` tool:
+
+- From `crewSoft` (150k): ONE warning per task (`⚠ crew X at 210k; compact it before its next new task: squadrant crew compact <p> X --keep '…' (a send that reopens it is refused from 250k). Shown once per task.`), then silence. A marker file per task id under `<state>/ctx-warned/` remembers it across `crew send` runs.
+- From `crewGate` (250k): a send that **reopens a finished task** (`done`/`failed`/`cancelled`, i.e. a new round) is **refused** with `crew X is at 300k ctx; compact first: squadrant crew compact <p> X --keep '…'` and a reminder of the operator rule. Pass `--no-compact` (MCP: `no_compact: true`) to send anyway. Sends to a live crew (working, awaiting-input, review, blocked) are never gated; an unmeasurable context (non-claude crews) is never gated. Nothing here compacts: the captain decides.
+- The refusal and the warning carry the rule text because captain-facing operator-profile items are injected once at session start and are not re-surfaced per prompt (the per-prompt hook matches rules-KB items only); the reminder sits at the point of action instead.
+
+**Warm-compact nudge (#1126).** An idle crew's prompt cache expires after ~60 min; the next send then rewrites the whole context. Compacting *before* that reads a warm cache and leaves a small context for the later restart. When a crew has been idle ≥ `warmNudgeIdleMin` (default 50) and its context is ≥ `warmNudgeCtx` (default 100k), the captain gets one daemon line through the same mailbox path as the rollover suggestions:
+
+`crew alpha idle 50m at 180k ctx; its cache expires in ~10m. More work on its track? `squadrant crew compact <project> alpha --keep '…'` now. Otherwise let it go cold, or close it once pushed.`
+
+- Idle = the crew's turn ended and it waits on the captain (`awaiting-input`, `review` or `done`). Not for `working`/`blocked`/`stalled`, `cancelled`/`failed` (closed), a crew under operator takeover, or an agent `crew compact` refuses (codex, gemini). The crew must still have a live pane (the lookup `crew compact` uses): `crew close` leaves a `done` record behind, so state alone cannot tell a closed crew from a live idle one. Context is metered for claude crews only, so opencode crews get no nudge until they have a meter.
+- Once per idle period, only inside the window `[warmNudgeIdleMin, 60)` minutes (past 60 the cache is already cold). Any activity or a compact moves the crew's heartbeat and re-arms it.
+- **Never compacts**: it only tells the captain the command. Evaluated on the same 15 s daemon tick as the other suggestions.
 
 **Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
 
 ```json
-{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000 } } }
+{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000, "crewGate": 250000,
+  "warmNudge": true, "warmNudgeIdleMin": 50, "warmNudgeCtx": 100000 } } }
 ```
 
-Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings, the crew warning and the reuse gate; `warmNudge: false` silences only the warm-compact nudge. The meter columns still show.
 
 ### Crew compact (#1051)
 
