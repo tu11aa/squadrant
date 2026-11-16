@@ -16,7 +16,8 @@ import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage, appendDispatchEntry } from "../mailbox.js";
 import { createContextAdvisor, boundaryOf } from "../context-suggest.js";
-import { readClaudeContext, contextTokens } from "../context-meter.js";
+import { readClaudeContext, contextTokens, meterTask } from "../context-meter.js";
+import { createWarmNudger } from "../crew-warm-nudge.js";
 import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
 import { formatDownAlertText } from "./down-alert.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
@@ -163,6 +164,19 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       return res;
     };
   }
+
+  // #1126: warm-compact nudge — one captain line per idle period for an idle, large-context crew
+  // whose prompt cache is about to expire. Nudge only; never compacts.
+  let crewHasPane: ((project: string, name: string) => Promise<boolean>) | undefined;
+  const warmNudger = createWarmNudger({
+    now: () => Date.now(),
+    budgetFor: (project) => resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project)),
+    tasks: (project) => store.list(project),
+    crewTokens: (t) => contextTokens(meterTask(t)),
+    hasLiveSurface: async (project, name) => (crewHasPane ? crewHasPane(project, name) : false),
+    enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+    log,
+  });
 
   // ── Health + snapshot ─────────────────────────────────────────────────────
 
@@ -420,6 +434,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       tasks: (project) => store.list(project),
       endTurn: (project, id) => ingest(project)({ type: "task.turn.completed", id, turnId: "compact" }),
     });
+    crewHasPane = crewCompact.hasPane;
     ctx.requestCrewCompact = crewCompact.request;
     ctx.cancelCrewCompact = crewCompact.cancel;
     ctx.crewCompactHolds = crewCompact.holdsCrew;
@@ -464,9 +479,11 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
 
   // #1015: evaluate pending boundaries / hard threshold. Cheap: transcript tail reads are mtime-cached.
   let contextTimer: NodeJS.Timeout | undefined;
-  if (advisor && opts.sweepMs && opts.sweepMs > 0) {
+  if (opts.sweepMs && opts.sweepMs > 0) {
     contextTimer = setInterval(() => {
-      void advisor.tick(opts.registeredProjects ?? Object.keys(loadConfig().projects));
+      const projects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
+      void advisor?.tick(projects);
+      void warmNudger.tick(projects);
     }, 15_000);
     contextTimer.unref?.();
   }

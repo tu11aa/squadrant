@@ -71,6 +71,11 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return deps.injectedSurfaces?.[`${project}:${name}`] ?? null;
   }
 
+  /** True when the crew still has a live pane (the same lookup `crew compact` uses). */
+  async function hasPane(project: string, name: string): Promise<boolean> {
+    return (await resolveSurface(project, name)) !== null;
+  }
+
   /** Validate and queue; returns once queued (the daemon owns the wait and the typing). */
   async function request(project: string, name: string, keep?: string): Promise<{ queued: true; agent: string }> {
     const task = taskFor(project, name);
@@ -216,5 +221,5 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     } finally { ticking = false; }
   }
 
-  return { request, cancel, tick, holdsCrew, compactBegin, compactDone, pendingCount: () => pending.size };
+  return { request, cancel, tick, holdsCrew, hasPane, compactBegin, compactDone, pendingCount: () => pending.size };
 }
