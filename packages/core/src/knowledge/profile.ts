@@ -8,8 +8,10 @@ import { kbConfigs, kbPath, resolveHome, subscribedKbs, userKbDir, USER_KB, type
 import { commitKbPaths, gitRun } from "./write.js";
 
 export const PROFILE_CORE_CAP = 3000;
+/** Chars of rendered style text per audience view; separate from the core cap (#1129). */
+export const PROFILE_STYLE_CAP = 1500;
 export const PROFILE_SUMMARY_MAX = 140;
-export const PROFILE_KINDS = ["preference", "correction", "procedure"] as const;
+export const PROFILE_KINDS = ["preference", "correction", "procedure", "style"] as const;
 export const PROFILE_AUDIENCES = ["all", "captain", "crew"] as const;
 export const PROFILE_TIERS = ["core", "situational"] as const;
 export const PROFILE_STATUSES = ["active", "archived", "proposed"] as const;
@@ -135,13 +137,25 @@ export function loadProfile(root: string): ProfileLoad {
   return res;
 }
 
-/** Summary chars of active core traits per audience view (spec §3 Cap). */
+/** The text a style trait contributes: its summary, then its body when it has one. */
+export const styleText = (t: Trait): string => (t.body.trim() ? `${t.summary}\n${t.body.trim()}` : t.summary);
+
+/** Summary chars of active core traits per audience view (spec §3 Cap). Style traits have their own cap. */
 export function viewSizes(traits: Trait[]): { captain: number; crew: number } {
+  return sizesBy(traits, (t) => t.kind !== "style" && t.tier === "core", (t) => t.summary.length);
+}
+
+/** Chars of active style traits per audience view (#1129). */
+export function styleViewSizes(traits: Trait[]): { captain: number; crew: number } {
+  return sizesBy(traits, (t) => t.kind === "style", (t) => styleText(t).length);
+}
+
+function sizesBy(traits: Trait[], keep: (t: Trait) => boolean, size: (t: Trait) => number): { captain: number; crew: number } {
   const s = { captain: 0, crew: 0 };
   for (const t of traits) {
-    if (t.status !== "active" || t.tier !== "core") continue;
-    if (t.audience !== "crew") s.captain += t.summary.length;
-    if (t.audience !== "captain") s.crew += t.summary.length;
+    if (t.status !== "active" || !keep(t)) continue;
+    if (t.audience !== "crew") s.captain += size(t);
+    if (t.audience !== "captain") s.crew += size(t);
   }
   return s;
 }

@@ -5,7 +5,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
 import { loadConfig, kbConfigs, workspacePath, stateRoot, legacyStateDir, stateSeedMarkerPath, daemonLogPath, resolveHome, USER_KB, type SquadrantConfig } from "@squadrant/shared";
-import { kbDir, legacyIndexHint, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
+import { styleReport, formatStyleRow, kbDir, legacyIndexHint, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -505,6 +505,10 @@ export const doctorCommand = new Command("doctor")
         console.log(`  ${chalk.green("✔ OK  ")}  ${name}: ${version}`);
       }
     }
+
+    // #1129: the operator style section each role/agent got at launch (opt-in; "no style" everywhere = nothing changes).
+    console.log(chalk.bold("\nOperator Style\n"));
+    for (const r of styleReport(config)) console.log(`  ${r.ids.length ? (r.delivered ? chalk.green("✔") : chalk.yellow("⚠")) : chalk.gray("○")} ${formatStyleRow(r)}`);
 
     if (results.some((r) => !r)) {
       process.exit(1);
