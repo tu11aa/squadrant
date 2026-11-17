@@ -11,15 +11,14 @@
 import { Command, Option } from "commander";
 import chalk from "chalk";
 import { spawn } from "node:child_process";
-import { loadConfig, stateRoot as defaultStateRoot, workspacePath } from "@squadrant/shared";
-import { readCaptainAddress, resolveCurrentProject } from "@squadrant/core";
+import { loadConfig, stateRoot as defaultStateRoot } from "@squadrant/shared";
+import { readCaptainAddress } from "@squadrant/core";
 import { RuntimeRegistry, createCmuxDriver, cmuxLocal, createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { squadrantdCall } from "./crew-control.js";
 import { runPing, formatPingResult } from "./ping.js";
-import { readCaptainSessionRegistry } from "../lib/captain-session-registry.js";
 import {
-  startCaptainRestart, runRestartHelper, releaseRestartLock, restartPaths, resolveCaptainSessionId,
-  cmuxSessionLifecycle, type StartRestartResult,
+  startCaptainRestart, runRestartHelper, releaseRestartLock, restartPaths, readCmuxHookStore, surfaceHookState,
+  surfaceUuidFromTree, type StartRestartResult,
 } from "../lib/captain-restart.js";
 
 export async function runCaptainCompact(
@@ -56,13 +55,8 @@ export function runCaptainRestart(project: string, opts: { focus?: boolean; time
         `for ${agent}, end the turn and run 'squadrant launch ${project} --fresh' from another terminal.`,
     );
   }
-  const sessionId = resolveCaptainSessionId(
-    process.env,
-    resolveCurrentProject(config) === project,
-    readCaptainSessionRegistry(workspacePath(project)),
-  );
   return startCaptainRestart({
-    project, stateRoot, cliPath: process.argv[1], sessionId, focus: opts.focus, timeoutMs: parseTimeoutMs(opts.timeoutMs),
+    project, stateRoot, cliPath: process.argv[1], focus: opts.focus, timeoutMs: parseTimeoutMs(opts.timeoutMs),
   });
 }
 
@@ -106,10 +100,9 @@ captainCommand
 // The detached helper itself — started by `captain restart`, never by hand.
 captainCommand
   .command("restart-run <project>", { hidden: true })
-  .option("--session <id>")
   .option("--focus")
   .option("--timeout-ms <ms>")
-  .action(async (project: string, opts: { session?: string; focus?: boolean; timeoutMs?: string }) => {
+  .action(async (project: string, opts: { focus?: boolean; timeoutMs?: string }) => {
     const { lock } = restartPaths(defaultStateRoot(), project);
     const log = (line: string) => console.log(`[${new Date().toISOString()}] ${line}`);
     let ok = false;
@@ -120,9 +113,12 @@ captainCommand
       const outcome = await runRestartHelper({
         project,
         captainName,
-        sessionId: opts.session,
         runtime,
-        lifecycle: (id) => cmuxSessionLifecycle(id),
+        hookState: async (pane) => {
+          const tree = cmuxLocal(["tree", "--workspace", pane.workspaceId, "--json", "--id-format", "both"]);
+          const uuid = surfaceUuidFromTree(tree, pane.surfaceId);
+          return uuid ? surfaceHookState(readCmuxHookStore(), uuid) : undefined;
+        },
         launchFresh: () => new Promise<number>((resolve) => {
           const c = spawn(process.execPath, [process.argv[1], "launch", project, "--fresh", "--headless"], { stdio: ["ignore", "inherit", "inherit"] });
           c.on("error", (e) => { log(`launch did not start: ${e.message}`); resolve(1); });

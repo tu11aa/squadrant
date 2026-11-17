@@ -472,6 +472,8 @@ If everything is shipped and there is no in-flight work, you do not need to writ
 
 `/squadrant:rollover` (alias `/squadrant:roll`) does the three manual steps in one go: handoff + daily log → `squadrant captain compact {project}` (the daemon types `/compact` once your turn ends and the input box is clear) → after the compact, the SessionStart hook injects your latest handoff and you continue from `nextSteps`. The same re-injection happens for a `/compact` the operator types by hand.
 
+**Restart vs rollover.** Rollover keeps the same session (compacted), so the system prompt does not change. `/squadrant:restart` (alias `/squadrant:rs`) replaces the session: handoff + daily log → `squadrant captain restart {project}` as the last action → a detached helper waits for your turn to end, closes this workspace and runs `launch {project} --fresh`; the new captain reads the handoff in its startup checklist. Use it when the operator changed your style, profile or template, or wants a clean session. Never run `launch {project} --fresh` from your own pane: it closes your workspace and dies half-way.
+
 5. (Optional) If a Command session is running and you want to notify it:
    ```bash
    squadrant runtime send --command "Captain {project} ending session — handoff written."

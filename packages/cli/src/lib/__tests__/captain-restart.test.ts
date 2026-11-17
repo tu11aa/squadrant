@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  acquireRestartLock, releaseRestartLock, readRestartLock, restartPaths, captainIdleVerdict, cmuxSessionLifecycle,
-  resolveCaptainSessionId, runRestartHelper, startCaptainRestart, helperEnv, RESTART_IDLE_POLLS,
+  acquireRestartLock, releaseRestartLock, readRestartLock, restartPaths, captainIdleVerdict, readCmuxHookStore,
+  surfaceHookState, surfaceUuidFromTree, runRestartHelper, startCaptainRestart, helperEnv, RESTART_IDLE_POLLS,
   type RestartHelperDeps,
 } from "../captain-restart.js";
 
@@ -59,28 +59,25 @@ describe("captainIdleVerdict", () => {
   });
 });
 
-describe("cmuxSessionLifecycle", () => {
-  it("reads agentLifecycle from cmux's hook store, undefined when absent", () => {
-    fs.writeFileSync(path.join(dir, "claude-hook-sessions.json"), JSON.stringify({ sessions: { s1: { agentLifecycle: "running" } } }));
-    expect(cmuxSessionLifecycle("s1", dir)).toBe("running");
-    expect(cmuxSessionLifecycle("s2", dir)).toBeUndefined();
-    expect(cmuxSessionLifecycle("s1", path.join(dir, "missing"))).toBeUndefined();
+describe("cmux hook store", () => {
+  it("maps the captain's surface to its active session and that session's lifecycle", () => {
+    fs.writeFileSync(path.join(dir, "claude-hook-sessions.json"), JSON.stringify({
+      activeSessionsBySurface: { "UUID-1": { sessionId: "s1" }, "UUID-2": { sessionId: "gone" } },
+      sessions: { s1: { agentLifecycle: "running" } },
+    }));
+    const store = readCmuxHookStore(dir);
+    expect(surfaceHookState(store, "UUID-1")).toEqual({ sessionId: "s1", lifecycle: "running" });
+    expect(surfaceHookState(store, "UUID-2")).toEqual({ sessionId: "gone" });
+    expect(surfaceHookState(store, "UUID-3")).toBeUndefined();
+    expect(readCmuxHookStore(path.join(dir, "missing"))).toBeNull();
+    expect(surfaceHookState(null, "UUID-1")).toBeUndefined();
   });
-});
 
-describe("resolveCaptainSessionId", () => {
-  const registry = [
-    { sessionId: "old", project: "p", agent: "claude", startedAt: "2026-11-16T00:00:00Z", cwd: "", transcriptPath: "" },
-    { sessionId: "new", project: "p", agent: "claude", startedAt: "2026-11-17T00:00:00Z", cwd: "", transcriptPath: "" },
-  ];
-  const captainEnv = { SQUADRANT_ROLE: "captain", CLAUDE_CODE_SESSION_ID: "own" };
-  it("uses its own session from the captain's own pane", () => {
-    expect(resolveCaptainSessionId(captainEnv, true, registry)).toBe("own");
-  });
-  it("falls back to the newest SessionStart record elsewhere (other project, crew, plain shell)", () => {
-    expect(resolveCaptainSessionId(captainEnv, false, registry)).toBe("new");
-    expect(resolveCaptainSessionId({ ...captainEnv, SQUADRANT_CREW_TASK_ID: "t" }, true, registry)).toBe("new");
-    expect(resolveCaptainSessionId({}, true, [])).toBeUndefined();
+  it("resolves a surface ref to its UUID from cmux tree output", () => {
+    const tree = JSON.stringify({ windows: [{ workspaces: [{ panes: [{ surfaces: [{ ref: "surface:5", id: "UUID-5" }] }] }] }] });
+    expect(surfaceUuidFromTree(tree, "surface:5")).toBe("UUID-5");
+    expect(surfaceUuidFromTree(tree, "surface:6")).toBeUndefined();
+    expect(surfaceUuidFromTree("not json", "surface:5")).toBeUndefined();
   });
 });
 
@@ -91,13 +88,12 @@ function helperDeps(screens: Array<string | null>, over: Partial<RestartHelperDe
   const deps: RestartHelperDeps = {
     project: "p",
     captainName: "p-captain",
-    sessionId: "s1",
     runtime: {
       status: vi.fn(async () => ({ id: "workspace:7", name: "p-captain", status: "running" as const })),
       listSurfaces: vi.fn(async () => [{ workspaceId: "workspace:7", surfaceId: "surface:1", title: "p-captain" }]),
       readPaneScreen: vi.fn(async () => (screens[Math.min(i++, screens.length - 1)] ?? "") as string),
     },
-    lifecycle: () => "idle",
+    hookState: async () => ({ sessionId: "s1", lifecycle: "idle" }),
     launchFresh: vi.fn(async () => { calls.push("launch"); return 0; }),
     notify: vi.fn(async (text: string) => { calls.push(`notify:${text}`); }),
     log: () => {},
@@ -119,10 +115,16 @@ describe("runRestartHelper", () => {
   });
 
   it("does not launch while the hook store says the turn is running", async () => {
-    const { deps, calls } = helperDeps([IDLE], { lifecycle: () => "running" });
+    const { deps, calls } = helperDeps([IDLE], { hookState: async () => ({ sessionId: "s1", lifecycle: "running" }) });
     expect(await runRestartHelper(deps)).toBe("gave-up");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatch(/^notify:captain restart p: gave up after 10s .*last: hook:running/);
+  });
+
+  it("keeps waiting when a poll throws", async () => {
+    const { deps, calls } = helperDeps([IDLE], { hookState: async () => { throw new Error("cmux down"); } });
+    expect(await runRestartHelper(deps)).toBe("gave-up");
+    expect(calls[0]).toMatch(/last: error: cmux down/);
   });
 
   it("never treats a missing workspace as gone (no launch beside the old captain)", async () => {
@@ -151,10 +153,10 @@ describe("startCaptainRestart", () => {
     const unref = vi.fn();
     const spawn = vi.fn(() => ({ pid: 4242, unref })) as unknown as typeof import("node:child_process").spawn;
     const env = { PATH: "/bin", CMUX_WORKSPACE_ID: "ws", CMUX_SURFACE_ID: "sf", CLAUDE_CODE_SESSION_ID: "s", CMUX_SOCKET_PATH: "/sock" };
-    const r = startCaptainRestart({ project: "p", stateRoot: dir, cliPath: "/cli.js", sessionId: "s1", focus: true, timeoutMs: 5000, env, spawn, alive: () => true });
+    const r = startCaptainRestart({ project: "p", stateRoot: dir, cliPath: "/cli.js", focus: true, timeoutMs: 5000, env, spawn, alive: () => true });
     expect(r).toEqual({ status: "started", pid: 4242, log: path.join(dir, "p", "captain-restart.log") });
     const [, args, opts] = (spawn as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(args).toEqual(["/cli.js", "captain", "restart-run", "p", "--session", "s1", "--focus", "--timeout-ms", "5000"]);
+    expect(args).toEqual(["/cli.js", "captain", "restart-run", "p", "--focus", "--timeout-ms", "5000"]);
     expect(opts.detached).toBe(true);
     expect(opts.env).toEqual({ PATH: "/bin", CMUX_SOCKET_PATH: "/sock" });
     expect(unref).toHaveBeenCalled();

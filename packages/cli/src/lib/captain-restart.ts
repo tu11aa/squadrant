@@ -9,21 +9,21 @@
 //
 // Idle = BOTH of, for RESTART_IDLE_POLLS consecutive polls:
 //  - cmux's hook store (~/.cmuxterm/claude-hook-sessions.json, written by cmux's
-//    own Claude hooks) reports the captain session's turn as over: agentLifecycle
-//    "idle" (Stop fired) or "backgroundWorkPending" — not "running" or
-//    "needsInput" (a permission/question prompt). Ground truth, not scraping.
+//    own Claude hooks) reports the turn of the session active on the captain's
+//    surface as over: agentLifecycle "idle" (Stop fired) or "backgroundWorkPending"
+//    — not "running" or "needsInput" (a permission/question prompt). Keyed by the
+//    surface (activeSessionsBySurface), so it follows the live session.
 //  - the captain pane reads idle the same way `captain compact` checks it: no
 //    working spinner, no option modal, an empty input box (a draft is someone
 //    typing; closing would throw it away).
-// A session with no hook-store record falls back to the pane check alone.
+// A surface with no hook-store record falls back to the pane check alone.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn as nodeSpawn } from "node:child_process";
 import { CC_WORKING_RE, discoverCaptainSurface } from "@squadrant/core";
 import { hasModalOptionList, parseDraftFromScreen } from "@squadrant/workspaces";
-import type { RuntimeDriver } from "@squadrant/shared";
-import type { CaptainSessionRecord } from "./handoff-facts.js";
+import type { RuntimeDriver, PaneRef } from "@squadrant/shared";
 
 export const RESTART_TIMEOUT_MS = 10 * 60_000;
 export const RESTART_POLL_MS = 1_000;
@@ -76,29 +76,39 @@ export function releaseRestartLock(lockPath: string, pid: number): void {
   if (readRestartLock(lockPath)?.pid === pid) fs.rmSync(lockPath, { force: true });
 }
 
-// ─── which session, and is it idle ───────────────────────────────────────────
+// ─── is it idle ──────────────────────────────────────────────────────────────
 
-/** The captain's Claude session: this process's own when run from that captain's pane, else the newest SessionStart record (#651). */
-export function resolveCaptainSessionId(
-  env: NodeJS.ProcessEnv,
-  inOwnCaptainPane: boolean,
-  registry: CaptainSessionRecord[],
-): string | undefined {
-  if (inOwnCaptainPane && env.SQUADRANT_ROLE === "captain" && !env.SQUADRANT_CREW_TASK_ID && env.CLAUDE_CODE_SESSION_ID) {
-    return env.CLAUDE_CODE_SESSION_ID;
-  }
-  return [...registry].sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0]?.sessionId;
+export interface HookState { sessionId: string; lifecycle?: string }
+
+/** Pure. The session cmux has active on a surface (by surface UUID) and its agentLifecycle. */
+export function surfaceHookState(store: unknown, surfaceUuid: string): HookState | undefined {
+  const s = store as {
+    activeSessionsBySurface?: Record<string, { sessionId?: unknown }>;
+    sessions?: Record<string, { agentLifecycle?: unknown }>;
+  } | null;
+  const sessionId = s?.activeSessionsBySurface?.[surfaceUuid]?.sessionId;
+  if (typeof sessionId !== "string") return undefined;
+  const lifecycle = s?.sessions?.[sessionId]?.agentLifecycle;
+  return { sessionId, ...(typeof lifecycle === "string" ? { lifecycle } : {}) };
 }
 
-/** agentLifecycle of a Claude session in cmux's hook store; undefined when there is no record. */
-export function cmuxSessionLifecycle(
-  sessionId: string,
+export function readCmuxHookStore(
   stateDir: string = process.env.CMUX_AGENT_HOOK_STATE_DIR ?? path.join(os.homedir(), ".cmuxterm"),
-): string | undefined {
+): unknown {
+  try { return JSON.parse(fs.readFileSync(path.join(stateDir, "claude-hook-sessions.json"), "utf-8")); } catch { return null; }
+}
+
+/** Pure. A surface ref's UUID from `cmux tree --json --id-format both` output. */
+export function surfaceUuidFromTree(treeJson: string, surfaceRef: string): string | undefined {
   try {
-    const store = JSON.parse(fs.readFileSync(path.join(stateDir, "claude-hook-sessions.json"), "utf-8"));
-    const v = store?.sessions?.[sessionId]?.agentLifecycle;
-    return typeof v === "string" ? v : undefined;
+    const tree = JSON.parse(treeJson) as {
+      windows?: Array<{ workspaces?: Array<{ panes?: Array<{ surfaces?: Array<{ ref?: string; id?: string }> }> }> }>;
+    };
+    return tree.windows
+      ?.flatMap((w) => w.workspaces ?? [])
+      .flatMap((w) => w.panes ?? [])
+      .flatMap((p) => p.surfaces ?? [])
+      .find((s) => s.ref === surfaceRef)?.id;
   } catch { return undefined; }
 }
 
@@ -127,9 +137,9 @@ export function captainIdleVerdict(o: { lifecycle?: string; screen: string | nul
 export interface RestartHelperDeps {
   project: string;
   captainName: string;
-  sessionId?: string;
   runtime: Pick<RuntimeDriver, "status" | "listSurfaces" | "readPaneScreen" | "inputState">;
-  lifecycle: (sessionId: string) => string | undefined;
+  /** cmux hook-store state of the session on the captain's pane; undefined when there is none. */
+  hookState: (pane: PaneRef) => Promise<HookState | undefined>;
   /** Runs `launch <project> --fresh --headless`; resolves its exit code. */
   launchFresh: () => Promise<number>;
   /** Switch to the new captain workspace (--focus). */
@@ -150,13 +160,17 @@ export async function runRestartHelper(d: RestartHelperDeps): Promise<RestartOut
   const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = d.timeoutMs ?? RESTART_TIMEOUT_MS;
   const deadline = now() + timeoutMs;
-  const hookRecord = d.sessionId ? d.lifecycle(d.sessionId) !== undefined : false;
-  d.log(`waiting for captain '${d.captainName}' to go idle (session ${d.sessionId ?? "unknown"}; ${hookRecord ? "hook store + pane" : "pane only — no hook-store record"})`);
+  d.log(`waiting for captain '${d.captainName}' to go idle`);
 
   let idlePolls = 0;
   let lastReason = "";
+  let lastSession: string | undefined | null = null;
   for (;;) {
-    const verdict = await pollOnce(d);
+    const verdict = await pollOnce(d, (s) => {
+      if (s?.sessionId === lastSession) return;
+      lastSession = s?.sessionId;
+      d.log(s ? `captain session ${s.sessionId} (hook store + pane)` : "no hook-store record for the captain pane — pane check only");
+    }).catch((e: unknown): IdleVerdict => ({ idle: false, reason: `error: ${(e as Error).message}` }));
     if (verdict.idle) {
       if (++idlePolls >= RESTART_IDLE_POLLS) break;
     } else {
@@ -190,7 +204,7 @@ export async function runRestartHelper(d: RestartHelperDeps): Promise<RestartOut
   return "restarted";
 }
 
-async function pollOnce(d: RestartHelperDeps): Promise<IdleVerdict> {
+async function pollOnce(d: RestartHelperDeps, seen: (s: HookState | undefined) => void): Promise<IdleVerdict> {
   // A missing workspace may be a cmux read error (list() swallows them): never
   // treat it as "gone" — a launch then would add a second captain next to the old one.
   const ws = await d.runtime.status(d.captainName);
@@ -199,8 +213,9 @@ async function pollOnce(d: RestartHelperDeps): Promise<IdleVerdict> {
   if (!pane) return { idle: false, reason: "no-surface" };
   const screen = await d.runtime.readPaneScreen(pane);
   const inputState = await d.runtime.inputState?.(pane);
-  const lifecycle = d.sessionId ? d.lifecycle(d.sessionId) : undefined;
-  return captainIdleVerdict({ lifecycle, screen, inputState });
+  const hook = await d.hookState(pane);
+  seen(hook);
+  return captainIdleVerdict({ lifecycle: hook?.lifecycle, screen, inputState });
 }
 
 // ─── spawning it ─────────────────────────────────────────────────────────────
@@ -223,7 +238,6 @@ export interface StartRestartOpts {
   stateRoot: string;
   /** The squadrant CLI entry (process.argv[1]). */
   cliPath: string;
-  sessionId?: string;
   focus?: boolean;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -246,7 +260,6 @@ export function startCaptainRestart(o: StartRestartOpts): StartRestartResult {
     const fd = fs.openSync(log, "a");
     fs.writeSync(fd, `\n[${startedAt}] captain restart ${o.project} requested\n`);
     const args = [o.cliPath, "captain", "restart-run", o.project];
-    if (o.sessionId) args.push("--session", o.sessionId);
     if (o.focus) args.push("--focus");
     if (o.timeoutMs !== undefined) args.push("--timeout-ms", String(o.timeoutMs));
     const child = (o.spawn ?? nodeSpawn)(process.execPath, args, {
