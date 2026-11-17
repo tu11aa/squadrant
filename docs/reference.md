@@ -33,6 +33,7 @@ guided first run — come back here when you need the details.
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
 - [Captain rollover](#captain-rollover-1010)
+- [Captain restart](#captain-restart-1137)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
 - [MCP server (`squadrant mcp`)](#mcp-server-squadrant-mcp-1029)
@@ -47,6 +48,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant captain restart <project> [--focus]` | Restart the project's Claude captain into a fresh session once its turn ends; safe to run from the captain's own pane. Returns immediately. See [Captain restart](#captain-restart-1137). |
 | `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done, from the moment the crew is idle (a busy or blocked crew's sends go through). See [Crew compact](#crew-compact-1051). |
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
@@ -1010,6 +1012,19 @@ squadrant dev down                                    # kill it, delete everythi
     #13 task.done (c2): CREW BLOCKED c2
   ```
 - **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
+
+## Captain restart (#1137)
+
+`/squadrant:restart` (alias `/squadrant:rs`) restarts a Claude captain into a **new session**, so a changed system prompt (operator style, profile edits, a template change) takes effect. Rollover keeps the same session and compacts it; restart replaces it. In order, the captain writes the consolidated handoff (same rules as rollover; never `read-handoff.sh`), writes the daily log, runs `squadrant captain restart <project>` as its last action and ends the turn with one short line.
+
+`launch <project> --fresh` cannot do this from the captain's pane: it closes the captain workspace first, which kills its own terminal and the launch half-way. `captain restart` runs the relaunch from outside the workspace:
+
+- **Detached helper.** The command takes the per-project lock, spawns `squadrant captain restart-run <project>` (hidden) with `detached: true` (its own session and process group, so closing the captain's terminal does not reach it), stdio appended to `<state dir>/<project>/captain-restart.log`, and returns at once with the helper pid and log path. The helper's env drops the captain pane/session identity (`CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID`, `CMUX_PANEL_ID`, `CMUX_TAB_ID`, `CLAUDE_CODE_SESSION_ID`, the peer socket vars, …): that pane is about to close.
+- **Idle check.** Every second the helper finds the captain pane (workspace and tab named after the captain) and requires, on 3 consecutive polls: (1) cmux's hook store (`~/.cmuxterm/claude-hook-sessions.json`, written by cmux's own Claude hooks) shows the session active on that surface (`activeSessionsBySurface`) with `agentLifecycle` `idle` (Stop fired) or `backgroundWorkPending`, not `running` or `needsInput` (an open permission/question prompt); and (2) the pane itself reads idle the way `captain compact` checks it: no working spinner, no option modal, and an empty input box (cmux `surface.input_state` when available, else the screen parse; a draft means someone is typing and is never thrown away). A surface with no hook-store record falls back to the pane check alone. A missing workspace counts as "not idle", never as "gone", so a cmux read error cannot start a second captain beside the old one.
+- **Relaunch.** Once idle it runs `squadrant launch <project> --fresh --headless`, which closes the old workspace (unpin + close), waits for the old captain to release its peer socket (#1104) and spawns the new one with the usual startup prompt. With `--focus` the helper then switches cmux to the new workspace. The helper exits; the lock is removed.
+- **Guards.** One pending restart per project: `<state dir>/<project>/captain-restart.lock` holds the helper pid; a second request while that pid is alive prints `⏸ A restart for '<project>' is already pending …` and starts nothing (a lock whose pid is dead is stale and replaced). If the captain is not idle within 10 minutes the helper gives up without touching anything and sends `captain restart <project>: gave up after 10 min …` to the operator (configured notifier) and to the captain (`ping` path: peer channel, else mailbox). A failed `launch` sends the same kind of notice. Claude captains only: for any other captain agent the command refuses with the reason (the idle check reads Claude Code's hook state and pane chrome); relaunch those with `launch --fresh` from another terminal.
+- **No daemon change.** The helper uses only the CLI, cmux and files the daemon already writes, so it works with whatever daemon version is running.
+- **Handoff on start.** The fresh session gets the normal startup prompt, and the captain template's startup checklist reads the handoff (`read-handoff.sh`). The `SessionStart` re-injection above is for `source: "compact"` only and is not involved.
 
 ## Context meter & rollover suggestions (#1015)
 
