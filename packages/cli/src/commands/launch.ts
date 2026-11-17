@@ -11,7 +11,7 @@ import os from "node:os";
 import chalk from "chalk";
 import { loadConfig, isolatedConfigDir, stateRoot as defaultStateRoot, sessionsPath, legacySessionsPath, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
-import { ensureClaudeTrust, trustSpellings } from "./dev.js";
+import { ensureClaudeTrust, trustSpellings } from "../lib/claude-trust.js";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd, hasClaudeSession,
