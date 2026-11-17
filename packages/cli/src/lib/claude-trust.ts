@@ -2,9 +2,8 @@
 //
 // Edits to the `projects` map of `~/.claude.json` that make Claude Code skip its folder-trust dialog:
 // the dev captain's project (#1090) and the per-task crew brief folder (#1138).
-import { readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { mkdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { stateRoot } from "@squadrant/shared";
 
