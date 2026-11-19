@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, cachedMinSafeWarning } from "@squadrant/shared";
+import { installedVersion } from "./update.js";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 import type { ComponentHealth } from "@squadrant/core";
 
@@ -67,6 +68,12 @@ export const statusCommand = new Command("status")
     // that were demonstrably alive. `null` means the daemon is unreachable —
     // liveness is genuinely unknown, not offline (#538's core ask).
     const health = await queryHealth();
+
+    // #1150: below the release's minSafe floor (cached; no network).
+    try {
+      const w = cachedMinSafeWarning({ config, currentVersion: installedVersion() });
+      if (w) console.log(chalk.yellow(`\n${w}`));
+    } catch { /* best-effort */ }
 
     console.log(chalk.bold("\nProject Status\n"));
     console.log(chalk.dim(`  ${"PROJECT".padEnd(18)} CAPTAIN`));

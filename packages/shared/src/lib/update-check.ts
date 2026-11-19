@@ -11,6 +11,21 @@ export interface UpdateCheckState {
    *  FAILURE_RETRY_MS backoff instead of the full 24h success interval, so an offline
    *  machine retries roughly hourly instead of hitting the registry on every invocation. */
   lastCheckFailed?: boolean;
+  /** Release metadata from the registry's `squadrantUpdate` field, cached with latestKnown.
+   *  Absent = normal. */
+  level?: UpdateLevel;
+  reason?: string;
+  minSafe?: string;
+}
+
+export type UpdateLevel = "normal" | "important";
+
+/** What a published release says about itself (root package.json `squadrantUpdate`). */
+export interface ReleaseInfo {
+  version: string;
+  level: UpdateLevel;
+  reason?: string;
+  minSafe?: string;
 }
 
 export interface CheckForUpdateOutcome {
@@ -105,16 +120,60 @@ export function detectInstallManager(modulePath: string = import.meta.url): Inst
   return "npm";
 }
 
-function upgradeCommandFor(manager: InstallManager): string {
+/** argv for a global install of `squadrant@<spec>` with the given manager. */
+export function installArgvFor(manager: InstallManager, spec: string): string[] {
   switch (manager) {
-    case "pnpm": return "pnpm add -g squadrant@latest";
-    case "yarn": return "yarn global add squadrant@latest";
-    case "npm": return "npm i -g squadrant@latest";
+    case "pnpm": return ["pnpm", "add", "-g", `squadrant@${spec}`];
+    case "yarn": return ["yarn", "global", "add", `squadrant@${spec}`];
+    case "npm": return ["npm", "i", "-g", `squadrant@${spec}`];
   }
 }
 
-export function formatUpdateNotice(latest: string, current: string, modulePath: string = import.meta.url): string {
-  return `⬆ squadrant ${latest} available (you have ${current}) — ${upgradeCommandFor(detectInstallManager(modulePath))}`;
+function upgradeCommandFor(manager: InstallManager): string {
+  return installArgvFor(manager, "latest").join(" ");
+}
+
+/** True when `current` is below the release's `minSafe` floor. */
+export function isBelowMinSafe(current: string, minSafe: string | undefined): boolean {
+  return !!minSafe && isNewerVersion(minSafe, current);
+}
+
+/** Parses the optional `squadrantUpdate` field of a registry document. Missing/invalid = normal. */
+export function parseReleaseInfo(doc: unknown): ReleaseInfo | null {
+  const d = doc as { version?: unknown; squadrantUpdate?: unknown } | null;
+  if (typeof d?.version !== "string") return null;
+  const meta = d.squadrantUpdate as { level?: unknown; reason?: unknown; minSafe?: unknown } | null | undefined;
+  const info: ReleaseInfo = { version: d.version, level: "normal" };
+  if (!meta || typeof meta !== "object") return info;
+  if (meta.level === "important") info.level = "important";
+  if (typeof meta.reason === "string" && meta.reason.trim()) info.reason = meta.reason.trim();
+  if (typeof meta.minSafe === "string" && /^v?\d+\.\d+\.\d+/.test(meta.minSafe.trim())) info.minSafe = meta.minSafe.trim();
+  return info;
+}
+
+export function formatUpdateNotice(
+  latest: string,
+  current: string,
+  modulePath: string = import.meta.url,
+  meta?: Pick<UpdateCheckState, "level" | "reason" | "minSafe">,
+): string {
+  const cmd = upgradeCommandFor(detectInstallManager(modulePath));
+  const because = meta?.reason ? ` — ${meta.reason}` : "";
+  if (isBelowMinSafe(current, meta?.minSafe)) {
+    return `⚠ squadrant ${current} is below the minimum safe version ${meta!.minSafe}${because}. Update now: ${cmd}`;
+  }
+  if (meta?.level === "important") {
+    return `⚠ IMPORTANT: squadrant ${latest} available (you have ${current})${because}. Update soon: ${cmd}`;
+  }
+  return `⬆ squadrant ${latest} available (you have ${current}) — ${cmd}`;
+}
+
+/** The notice a cached state implies for `current`, or null. Pure; no network. */
+export function noticeFromState(state: UpdateCheckState | undefined, current: string): string | null {
+  const latest = state?.latestKnown;
+  if (!latest) return null;
+  if (!isNewerVersion(latest, current) && !isBelowMinSafe(current, state.minSafe)) return null;
+  return formatUpdateNotice(latest, current, undefined, state);
 }
 
 /**
@@ -124,25 +183,31 @@ export function formatUpdateNotice(latest: string, current: string, modulePath: 
  * failures are additionally handled by requestJson's own req.unref()/setTimeout, which
  * guarantees the underlying resource can never hold the process open either.
  */
-export async function fetchLatestVersion(
+export async function fetchLatestRelease(
   requestFn: RegistryRequest = requestJson,
   timeoutMs: number = FETCH_TIMEOUT_MS,
-): Promise<string | null> {
+): Promise<ReleaseInfo | null> {
   const timeout = new Promise<null>((resolve) => {
     const timer = setTimeout(() => resolve(null), timeoutMs);
     timer.unref?.();
   });
 
-  const request = (async (): Promise<string | null> => {
+  const request = (async (): Promise<ReleaseInfo | null> => {
     try {
-      const data = (await requestFn(REGISTRY_URL, timeoutMs)) as { version?: unknown } | null;
-      return typeof data?.version === "string" ? data.version : null;
+      return parseReleaseInfo(await requestFn(REGISTRY_URL, timeoutMs));
     } catch {
       return null;
     }
   })();
 
   return Promise.race([request, timeout]);
+}
+
+export async function fetchLatestVersion(
+  requestFn: RegistryRequest = requestJson,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<string | null> {
+  return (await fetchLatestRelease(requestFn, timeoutMs))?.version ?? null;
 }
 
 /** Pure decision core: given cache state and an injected request function, decides whether
@@ -157,17 +222,39 @@ export async function checkForUpdate(opts: {
   timeoutMs?: number;
 }): Promise<CheckForUpdateOutcome> {
   if (!isCacheStale(opts.state, opts.now, opts.intervalMs, opts.failureIntervalMs)) {
-    const latest = opts.state?.latestKnown;
-    const notice = latest && isNewerVersion(latest, opts.currentVersion) ? formatUpdateNotice(latest, opts.currentVersion) : null;
-    return { notice, newState: null };
+    return { notice: noticeFromState(opts.state, opts.currentVersion), newState: null };
   }
 
-  const latest = await fetchLatestVersion(opts.fetchImpl, opts.timeoutMs);
-  if (!latest) return { notice: null, newState: { lastChecked: opts.now, lastCheckFailed: true } };
+  const release = await fetchLatestRelease(opts.fetchImpl, opts.timeoutMs);
+  if (!release) return { notice: null, newState: { lastChecked: opts.now, lastCheckFailed: true } };
 
-  const newState: UpdateCheckState = { lastChecked: opts.now, latestKnown: latest, lastCheckFailed: false };
-  const notice = isNewerVersion(latest, opts.currentVersion) ? formatUpdateNotice(latest, opts.currentVersion) : null;
-  return { notice, newState };
+  const newState: UpdateCheckState = {
+    lastChecked: opts.now,
+    latestKnown: release.version,
+    lastCheckFailed: false,
+    ...(release.level === "important" ? { level: release.level } : {}),
+    ...(release.reason ? { reason: release.reason } : {}),
+    ...(release.minSafe ? { minSafe: release.minSafe } : {}),
+  };
+  return { notice: noticeFromState(newState, opts.currentVersion), newState };
+}
+
+/** Synchronous, cache-only notice (no network): for `--version`, doctor and status. Honors the opt-outs. */
+export function cachedUpdateNotice(opts: {
+  config: Pick<SquadrantConfig, "defaults"> | undefined;
+  currentVersion: string;
+  env?: NodeJS.ProcessEnv;
+  statePath?: string;
+}): string | null {
+  if (isUpdateCheckDisabled(opts.config, opts.env ?? process.env)) return null;
+  return noticeFromState(readUpdateCheckState(opts.statePath), opts.currentVersion);
+}
+
+/** Cache-only: the below-minSafe warning, or null. For doctor/status. */
+export function cachedMinSafeWarning(opts: Parameters<typeof cachedUpdateNotice>[0]): string | null {
+  if (isUpdateCheckDisabled(opts.config, opts.env ?? process.env)) return null;
+  const state = readUpdateCheckState(opts.statePath);
+  return isBelowMinSafe(opts.currentVersion, state?.minSafe) ? noticeFromState(state, opts.currentVersion) : null;
 }
 
 export function readUpdateCheckState(statePath: string = UPDATE_CHECK_STATE_PATH): UpdateCheckState | undefined {

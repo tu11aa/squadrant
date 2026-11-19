@@ -71,7 +71,8 @@ function restartNotice(version: string, pathChanged: boolean): string {
  * Unlike notifyCaptainsOfEffort there is no initiating cwd captain to exclude —
  * the daemon boots independently of any captain — so this reaches ALL of them.
  * The appendCaptainMessage callback is a closure that captures stateRoot from
- * the caller (squadrantd.ts), so it takes (projectName, text).
+ * the caller (squadrantd.ts), so it takes (projectName, text). `text` overrides the
+ * default restart notice (reused by the update push, #1150).
  */
 export async function notifyCaptainsOfDaemonRestart(
   version: string,
@@ -79,8 +80,9 @@ export async function notifyCaptainsOfDaemonRestart(
   driver: DaemonRestartNotifyDriver,
   pathChanged = false,
   appendCaptainMessage: AppendCaptainMessageFn,
+  text?: string,
 ): Promise<void> {
-  const notice = restartNotice(version, pathChanged);
+  const notice = text ?? restartNotice(version, pathChanged);
   for (const [projName] of Object.entries(config.projects)) {
     try {
       const proj = config.projects[projName];

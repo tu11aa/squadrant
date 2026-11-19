@@ -7,7 +7,7 @@ vi.mock("node:https", () => ({
   get: (...args: unknown[]) => httpsGetMock(...args),
 }));
 
-const { isNewerVersion, isCacheStale, isUpdateCheckDisabled, formatUpdateNotice, detectInstallManager, fetchLatestVersion, checkForUpdate, notifyIfUpdateAvailable, UPDATE_CHECK_STATE_PATH } = await import(
+const { parseReleaseInfo, noticeFromState, cachedUpdateNotice, isBelowMinSafe, installArgvFor, isNewerVersion, isCacheStale, isUpdateCheckDisabled, formatUpdateNotice, detectInstallManager, fetchLatestVersion, checkForUpdate, notifyIfUpdateAvailable, UPDATE_CHECK_STATE_PATH } = await import(
   "../update-check.js"
 );
 
@@ -409,5 +409,72 @@ describe("notifyIfUpdateAvailable", () => {
         now,
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("release metadata (#1150)", () => {
+  it("parses squadrantUpdate; missing or invalid = normal", () => {
+    expect(parseReleaseInfo({ version: "1.2.3" })).toEqual({ version: "1.2.3", level: "normal" });
+    expect(parseReleaseInfo({ version: "1.2.3", squadrantUpdate: "bogus" })).toEqual({ version: "1.2.3", level: "normal" });
+    expect(parseReleaseInfo({ version: "1.2.3", squadrantUpdate: { level: "weird", minSafe: "nope" } })).toEqual({ version: "1.2.3", level: "normal" });
+    expect(parseReleaseInfo({ version: "1.2.3", squadrantUpdate: { level: "important", reason: " fix ", minSafe: "1.2.0" } })).toEqual({
+      version: "1.2.3", level: "important", reason: "fix", minSafe: "1.2.0",
+    });
+    expect(parseReleaseInfo(null)).toBeNull();
+  });
+
+  it("fetch result is cached with level/reason/minSafe and renders the right notice per level", async () => {
+    const mk = (squadrantUpdate?: unknown) => checkForUpdate({
+      currentVersion: "0.1.0", state: undefined, now: 1000,
+      fetchImpl: async () => ({ version: "0.2.0", squadrantUpdate }),
+    });
+    const normal = await mk();
+    expect(normal.notice).toMatch(/^⬆ squadrant 0.2.0 available/);
+    expect(normal.newState).toEqual({ lastChecked: 1000, latestKnown: "0.2.0", lastCheckFailed: false });
+
+    const important = await mk({ level: "important", reason: "data loss fix" });
+    expect(important.notice).toMatch(/IMPORTANT.*0.2.0.*data loss fix/);
+    expect(important.newState).toMatchObject({ level: "important", reason: "data loss fix" });
+
+    const below = await mk({ level: "important", minSafe: "0.2.0", reason: "sec" });
+    expect(below.notice).toMatch(/below the minimum safe version 0.2.0.*sec/);
+  });
+
+  it("minSafe warning comes from the cache with no network call", async () => {
+    const fetchImpl = vi.fn();
+    const out = await checkForUpdate({
+      currentVersion: "0.1.0", now: 2000, fetchImpl,
+      state: { lastChecked: 1000, latestKnown: "0.3.0", minSafe: "0.2.0" },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(out.notice).toMatch(/below the minimum safe version/);
+  });
+
+  it("noticeFromState: up to date and no floor breach = null", () => {
+    expect(noticeFromState({ latestKnown: "0.1.0", minSafe: "0.1.0" }, "0.1.0")).toBeNull();
+    expect(noticeFromState(undefined, "0.1.0")).toBeNull();
+    expect(isBelowMinSafe("0.1.0", undefined)).toBe(false);
+  });
+
+  it("cachedUpdateNotice reads the cache synchronously and honors opt-outs (#558)", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uc-"));
+    const statePath = path.join(dir, "update-check.json");
+    try {
+      expect(cachedUpdateNotice({ config: undefined, currentVersion: "0.1.0", env: {}, statePath })).toBeNull();
+      fs.writeFileSync(statePath, JSON.stringify({ lastChecked: 1, latestKnown: "9.9.9" }));
+      expect(cachedUpdateNotice({ config: undefined, currentVersion: "0.1.0", env: {}, statePath })).toMatch(/9.9.9 available/);
+      expect(cachedUpdateNotice({ config: undefined, currentVersion: "0.1.0", env: { NO_UPDATE_NOTIFIER: "1" }, statePath })).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("installArgvFor per manager", () => {
+    expect(installArgvFor("npm", "1.0.0")).toEqual(["npm", "i", "-g", "squadrant@1.0.0"]);
+    expect(installArgvFor("pnpm", "latest")).toEqual(["pnpm", "add", "-g", "squadrant@latest"]);
+    expect(installArgvFor("yarn", "latest")).toEqual(["yarn", "global", "add", "squadrant@latest"]);
   });
 });

@@ -32,6 +32,7 @@ guided first run — come back here when you need the details.
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
+- [Update notices and `squadrant update`](#update-notices-and-squadrant-update-1150)
 - [Captain rollover](#captain-rollover-1010)
 - [Captain restart](#captain-restart-1137)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
@@ -53,6 +54,7 @@ guided first run — come back here when you need the details.
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
+| `squadrant update [--check] [--dry-run] [--to <version>] [--force]` | Install the latest squadrant with the detected package manager, verify the installed binary, restart the daemon on it, list captains to relaunch. Never automatic. See [Update notices and `squadrant update`](#update-notices-and-squadrant-update-1150). |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
 | `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Then rewrites references to the moved paths. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
 | `squadrant migrate path <from> <to> [--dry-run]` | Move a file or dir you made, with the same merge rules as `migrate kb`, then rewrite references to it. If `<from>` is already gone and `<to>` exists, it only rewrites the references. See [Reference sweep](#reference-sweep-998). |
@@ -1015,6 +1017,45 @@ squadrant dev down                                    # kill it, delete everythi
 **Why `--settings`, not `CLAUDE_CONFIG_DIR` or a temp `HOME`.** Both of those give claude a fresh config dir, and claude reports `Not logged in · Please run /login` (checked with claude 2.1.310). `--setting-sources` + `--settings` keeps the login and `~/.claude.json`.
 
 **Limits.** Dev sessions still read the production templates and plugin dir (`~/.config/squadrant/templates`, `plugin`, `plugin-crew`), so a branch change to a role template or skill is not exercised. Claude itself still updates `~/.claude.json` (session counters, folder trust) as it does for any session.
+
+## Update notices and `squadrant update` (#1150)
+
+**Release metadata.** The published root `package.json` may carry an optional field. The registry `/latest` document the update check already fetches includes it, so there is no new server:
+
+```json
+"squadrantUpdate": { "level": "important", "reason": "one line, shown to the operator", "minSafe": "0.38.5" }
+```
+
+- `level`: `normal` (default; also what a missing or invalid field means) or `important`.
+- `reason`: optional one line, shown in the notice.
+- `minSafe`: optional semver floor. An install below it is told to update now.
+
+The check caches `level`, `reason` and `minSafe` with `latestKnown` in `~/.config/squadrant/update-check.json`.
+
+**What each level shows.**
+
+| Case | CLI notice (stderr, every command, from the cache) |
+|---|---|
+| `normal` | `⬆ squadrant X available (you have Y) — <install cmd>` |
+| `important` | `⚠ IMPORTANT: squadrant X available (you have Y) — <reason>. Update soon: <install cmd>` |
+| current < `minSafe` | `⚠ squadrant Y is below the minimum safe version M — <reason>. Update now: <install cmd>`. Also printed by `squadrant doctor` and `squadrant status`. |
+
+`squadrant --version` prints the cached notice after the version line (#558). It reads the cache synchronously and never waits on the network. With no cache it stays instant and silent.
+
+**Daemon push.** The daemon runs the same check at boot and every 6 hours (the 24h cache gates the network). For an important release, or when the running version is below `minSafe`, it sends one notice per version to every live captain through the mailbox, the same path as the daemon-restart notice. The version it already announced is stored in `<stateRoot>/update-notified.json`, so a restart does not repeat it. Normal releases are never pushed. Telegram does not carry this notice yet.
+
+**Opt-outs** cover all of the above (CLI notice, `--version`, daemon push): `NO_UPDATE_NOTIFIER=1` or `defaults.updateCheck: false`.
+
+**`squadrant update`** never runs by itself.
+
+1. Refuses on a dev, linked or git checkout (the running copy is not under `node_modules/squadrant/`).
+2. Refuses while any crew is live, unless `--force`.
+3. Installs `squadrant@latest` (or `--to <version>`) with the manager detected from the install path (npm, pnpm or yarn).
+4. Runs `squadrant --version` and requires the expected version before going on.
+5. Runs `squadrant heal daemon` so the daemon runs the new code.
+6. Lists live captains, which still run the old code: relaunch each with `/squadrant:restart` or `squadrant captain restart <project>`.
+
+`--check` only reports current, latest, level, reason and minSafe. `--dry-run` prints the commands without running them (the refusals still apply).
 
 ## Captain rollover (#1010)
 
