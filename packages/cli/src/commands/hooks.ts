@@ -17,7 +17,7 @@ import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } fro
 import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
-import { compactHandoffContext, compactCoreContext, prependAdditionalContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
+import { compactHandoffContext, compactCoreContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
 import { renderLiveLedger } from "../lib/compact-ledger.js";
 import { gatherLiveCrews, defaultCommandRunner } from "../lib/handoff-live-repo.js";
 import { runGatePermissionRequest } from "./gate.js";
@@ -198,6 +198,14 @@ export async function rulesHookOutput(
 /** The sub-command every agent's profile hook calls (#982): its own command, so its own additionalContext string. */
 export const PROFILE_HOOK_SUB = "profile-session-start";
 
+/** #1109: the captain-ops core after a compact has its own hook command too, so Claude's ~10k-per-string cap never cuts it. */
+export const CAPTAIN_CORE_HOOK_SUB = "captain-core";
+
+/** The captain-core hook output: only the core, only on a captain's SessionStart(source=compact); "" otherwise. Never throws. */
+export function captainCoreHookOutput(payload: unknown, env: NodeJS.ProcessEnv, project: string | null | undefined, skillFile?: string): string {
+  return appendAdditionalContext("", compactCoreContext(payload, env, project, skillFile));
+}
+
 /** hookEventName the agent expects back for its session-start point (opencode's plugin ignores it). */
 const SESSION_EVENT_NAME: Record<string, string> = { claude: "SessionStart", codex: "SessionStart", gemini: "SessionStart", opencode: "session" };
 
@@ -281,6 +289,14 @@ export function hooksCommand(): Command {
         process.exit(0);
       }
 
+      // #1109: the captain-ops core is its own command and emits nothing else.
+      if (sub === CAPTAIN_CORE_HOOK_SUB) {
+        let out = "";
+        try { out = captainCoreHookOutput(payload, process.env, opts.project ?? resolveCurrentProject(loadConfig())); } catch { /* fail-open */ }
+        if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
+        process.exit(0);
+      }
+
       // #899: inject Rules KB context first, for every claude session (captain,
       // crew, plain). Await the write so a later process.exit can't truncate it.
       let rulesOut = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project });
@@ -289,8 +305,6 @@ export function hooksCommand(): Command {
       if (sub === "session-start") {
         try {
           const project = opts.project ?? resolveCurrentProject(loadConfig());
-          // #1109: the captain-ops core goes FIRST, ahead of rules and the (possibly large) handoff.
-          rulesOut = prependAdditionalContext(rulesOut, compactCoreContext(payload, process.env, project));
           rulesOut = appendAdditionalContext(rulesOut, compactHandoffContext(payload, process.env, project));
           if (project && isCaptainCompactStart(payload, process.env, project)) {
             // #1015: the daemon's live crew ledger + undelivered mailbox, then lift the delivery

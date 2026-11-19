@@ -70,7 +70,7 @@ Only in the core `SKILL.md` ("Trigger table (the one source)"). The startup skil
 
 ## Surviving a compact
 
-Skill text is gone after a compact; the template survives. Two layers: (1) `SessionStart(source=compact)` for a captain re-injects the core `SKILL.md` (trigger table + the three core-only rules) as the FIRST part of `additionalContext`, before rules and the handoff (`compactCoreContext` + `prependAdditionalContext` in `packages/cli/src/lib/compact-handoff.ts`, wired in `hooks.ts`); the file is read at runtime, no copy in code. (2) One sentence in both captain templates: after a compact, if the trigger table is not in context, load captain-ops before the next action. Reference files are not re-injected (read on demand via the table). Only the Claude hook exists; other agents rely on (2).
+Skill text is gone after a compact; the template survives. Two layers: (1) `SessionStart(source=compact)` for a captain re-injects the core `SKILL.md` (trigger table + the three core-only rules) through its OWN hook command `squadrant hooks claude captain-core` (own `additionalContext` string, because Claude cuts one string at ~10k chars and a first attempt that prepended the core to the session-start string lost it behind a 20 KB handoff); `compactCoreContext` in `packages/cli/src/lib/compact-handoff.ts`, `captainCoreHookOutput` in `hooks.ts`, entry added by `installClaudeHooks`. The file is read at runtime, no copy in code. (2) One sentence in both captain templates: after a compact, if the trigger table is not in context, load captain-ops before the next action. Reference files are not re-injected (read on demand via the table). Only the Claude hook exists; other agents rely on (2).
 
 ## Changes outside captain-ops
 

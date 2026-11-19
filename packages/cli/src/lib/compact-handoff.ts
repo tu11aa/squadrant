@@ -60,20 +60,6 @@ export function compactCoreContext(
 
 export const CORE_NOTE = "Context was just compacted. This is your captain-ops core: read the reference file its trigger table names before each action.";
 
-/** Like appendAdditionalContext, but puts `extra` FIRST so a long later part can never cut it off. */
-export function prependAdditionalContext(out: string, extra: string, hookEventName = "SessionStart"): string {
-  if (!extra) return out;
-  if (!out) return appendAdditionalContext("", extra, hookEventName);
-  try {
-    const o = JSON.parse(out);
-    const prev = o?.hookSpecificOutput?.additionalContext;
-    o.hookSpecificOutput = { ...o.hookSpecificOutput, additionalContext: prev ? `${extra}\n\n${prev}` : extra };
-    return JSON.stringify(o);
-  } catch {
-    return out;
-  }
-}
-
 /** Fold extra context into a hook-output JSON string (or create one) so stdout stays a single JSON document. */
 export function appendAdditionalContext(out: string, extra: string, hookEventName = "SessionStart"): string {
   if (!extra) return out;

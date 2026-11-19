@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { compactHandoffContext, compactCoreContext, prependAdditionalContext, appendAdditionalContext, COMPACT_NOTE, CORE_NOTE } from "../compact-handoff.js";
+import { compactHandoffContext, compactCoreContext, appendAdditionalContext, COMPACT_NOTE, CORE_NOTE } from "../compact-handoff.js";
 
 let home: string;
 beforeEach(() => { home = fs.mkdtempSync(path.join(os.tmpdir(), "compact-handoff-")); });
@@ -76,18 +76,6 @@ describe("compactCoreContext", () => {
   it("the real shipped core is injected and carries the trigger table", () => {
     const real = path.resolve(__dirname, "../../../../../plugin/skills/captain-ops/SKILL.md");
     expect(compactCoreContext({ source: "compact" }, cap, "demo", real)).toContain("Trigger table");
-  });
-
-  it("goes first, so a large handoff and rules cannot cut it off, and the handoff is still there", () => {
-    fs.writeFileSync(path.join(home, "handoff.json"), JSON.stringify({ currentState: "x".repeat(30_000), nextSteps: ["merge #7"] }));
-    const rules = JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "RULES" } });
-    let out = prependAdditionalContext(rules, compactCoreContext({ source: "compact" }, cap, "demo", skill()));
-    out = appendAdditionalContext(out, compactHandoffContext({ source: "compact" }, cap, "demo", ws));
-    const text: string = JSON.parse(out).hookSpecificOutput.additionalContext;
-    expect(text.indexOf("CORE-END")).toBeGreaterThan(-1);
-    expect(text.indexOf("CORE-END")).toBeLessThan(1000);
-    expect(text.indexOf("CORE-END")).toBeLessThan(text.indexOf("RULES"));
-    expect(text).toContain("merge #7");
   });
 
   it("a crew compact start gets neither the core nor the handoff", () => {
