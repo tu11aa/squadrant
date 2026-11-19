@@ -61,6 +61,17 @@ function listSourceSkills(sourceSkillsDir: string): Map<string, string> {
   return out;
 }
 
+/** Reference files kept beside a skill's SKILL.md (#1109), by file name. */
+function referenceFiles(srcSkillPath: string): string[] {
+  return fs.readdirSync(path.dirname(srcSkillPath)).filter((n) => n.endsWith(".md") && n !== "SKILL.md").sort();
+}
+
+function sameReferences(srcSkillPath: string, targetDir: string): boolean {
+  const refs = referenceFiles(srcSkillPath);
+  const have = fs.existsSync(targetDir) ? fs.readdirSync(targetDir).filter((n) => n.endsWith(".md") && n !== "SKILL.md").sort() : [];
+  return refs.length === have.length && refs.every((n, i) => n === have[i] && fs.readFileSync(path.join(path.dirname(srcSkillPath), n)).equals(fs.readFileSync(path.join(targetDir, n))));
+}
+
 function hasMarker(dir: string): boolean {
   return fs.existsSync(path.join(dir, OPENCODE_SKILL_MARKER));
 }
@@ -98,7 +109,7 @@ export function syncOpencodeSkills(opts: SyncOpencodeSkillsOptions): OpencodeSki
     }
 
     const current = fs.existsSync(targetSkill) ? fs.readFileSync(targetSkill) : null;
-    if (current && current.equals(fs.readFileSync(srcPath))) {
+    if (current && current.equals(fs.readFileSync(srcPath)) && sameReferences(srcPath, targetDir)) {
       if (!managed && !opts.dryRun) {
         fs.writeFileSync(path.join(targetDir, OPENCODE_SKILL_MARKER), MARKER_BODY);
       }
@@ -109,6 +120,10 @@ export function syncOpencodeSkills(opts: SyncOpencodeSkillsOptions): OpencodeSki
     if (!opts.dryRun) {
       fs.mkdirSync(targetDir, { recursive: true });
       fs.copyFileSync(srcPath, targetSkill);
+      for (const n of fs.readdirSync(targetDir)) {
+        if (n.endsWith(".md") && n !== "SKILL.md") fs.rmSync(path.join(targetDir, n));
+      }
+      for (const n of referenceFiles(srcPath)) fs.copyFileSync(path.join(path.dirname(srcPath), n), path.join(targetDir, n));
       fs.writeFileSync(path.join(targetDir, OPENCODE_SKILL_MARKER), MARKER_BODY);
     }
     result.written.push(name);

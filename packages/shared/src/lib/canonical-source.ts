@@ -34,10 +34,16 @@ async function readSkills(
     const raw = await driver.read(skillPath);
     const parsed = parseSkill(raw);
     if (!parsed) continue;
+    // #1109: a skill may keep on-demand reference files beside SKILL.md (captain-ops). A text
+    // projection has no sibling files, so they follow the body as "Reference: <file>" sections.
+    const refs: string[] = [];
+    for (const f of (await driver.list(`${skillsDir}/${name}`)).filter((n) => n.endsWith(".md") && n !== "SKILL.md").sort()) {
+      refs.push(`### Reference: ${f}\n\n${(await driver.read(`${skillsDir}/${name}/${f}`)).trim()}`);
+    }
     skills.push({
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
-      content: parsed.body,
+      content: [parsed.body, ...refs].join("\n\n"),
     });
   }
   skills.sort((a, b) => a.name.localeCompare(b.name));

@@ -54,6 +54,19 @@ describe("canonical-source", () => {
     expect(k.content).toContain("K body");
   });
 
+  it("readUserLevelSource appends a skill's sibling reference files to its content (#1109)", async () => {
+    const driver = memDriver({
+      "plugin/skills/captain-ops/SKILL.md": "---\nname: captain-ops\ndescription: C desc\n---\n\nC core",
+      "plugin/skills/captain-ops/spawning.md": "SPAWN TEXT\n",
+      "plugin/skills/captain-ops/briefs.md": "BRIEF TEXT\n",
+    });
+    const c = (await readUserLevelSource(driver)).skills[0].content;
+    expect(c).toContain("C core");
+    expect(c).toContain("### Reference: briefs.md\n\nBRIEF TEXT");
+    expect(c).toContain("### Reference: spawning.md\n\nSPAWN TEXT");
+    expect(c.indexOf("briefs.md")).toBeLessThan(c.indexOf("spawning.md"));
+  });
+
   it("readUserLevelSource does NOT include squadrant's own AGENTS.md", async () => {
     const driver = memDriver({
       "AGENTS.md": "# Squadrant-specific content\nmcp stuff",
