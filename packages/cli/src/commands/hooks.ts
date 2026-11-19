@@ -17,7 +17,7 @@ import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } fro
 import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
-import { compactHandoffContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
+import { compactHandoffContext, compactCoreContext, prependAdditionalContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
 import { renderLiveLedger } from "../lib/compact-ledger.js";
 import { gatherLiveCrews, defaultCommandRunner } from "../lib/handoff-live-repo.js";
 import { runGatePermissionRequest } from "./gate.js";
@@ -289,6 +289,8 @@ export function hooksCommand(): Command {
       if (sub === "session-start") {
         try {
           const project = opts.project ?? resolveCurrentProject(loadConfig());
+          // #1109: the captain-ops core goes FIRST, ahead of rules and the (possibly large) handoff.
+          rulesOut = prependAdditionalContext(rulesOut, compactCoreContext(payload, process.env, project));
           rulesOut = appendAdditionalContext(rulesOut, compactHandoffContext(payload, process.env, project));
           if (project && isCaptainCompactStart(payload, process.env, project)) {
             // #1015: the daemon's live crew ledger + undelivered mailbox, then lift the delivery

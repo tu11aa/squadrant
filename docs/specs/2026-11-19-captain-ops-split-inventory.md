@@ -68,6 +68,10 @@ Only in the core `SKILL.md` ("Trigger table (the one source)"). The startup skil
 
 `prompt-master` (core row 2), `karpathy-principles` (row 5), `rules-ops` (rows 5, 8), `human-review-guide` (row 5), `daily-log` (row 7), `wiki-ops` (rows 7, 8), `add-pick-crew-rule` (row 1), `set-effort` (row 1), `rollover` + `roll` (row 7), `restart` + `rs` (row 7). `captain-startup` tests (`captain-startup-skill.test.ts`) fail when a skill named in any reference file is missing from the table.
 
+## Surviving a compact
+
+Skill text is gone after a compact; the template survives. Two layers: (1) `SessionStart(source=compact)` for a captain re-injects the core `SKILL.md` (trigger table + the three core-only rules) as the FIRST part of `additionalContext`, before rules and the handoff (`compactCoreContext` + `prependAdditionalContext` in `packages/cli/src/lib/compact-handoff.ts`, wired in `hooks.ts`); the file is read at runtime, no copy in code. (2) One sentence in both captain templates: after a compact, if the trigger table is not in context, load captain-ops before the next action. Reference files are not re-injected (read on demand via the table). Only the Claude hook exists; other agents rely on (2).
+
 ## Changes outside captain-ops
 
 - `templates/captain.claude.md` / `captain.generic.md`: startup step 4 prints the handoff once, step 5 loads captain-startup then the core; pointers to `briefs.md`, `knowledge.md`, `question-triage.md`. No hard rule changed.

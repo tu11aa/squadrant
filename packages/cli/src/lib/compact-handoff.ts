@@ -2,7 +2,7 @@
 // back. Pure of daemon/IPC — reads the project's handoff files only.
 import fs from "node:fs";
 import path from "node:path";
-import { workspacePath } from "@squadrant/shared";
+import { workspacePath, CONFIG_DIR } from "@squadrant/shared";
 import { readNewestArchivedHandoff } from "./handoff-archive.js";
 
 export const COMPACT_NOTE = "Context was just compacted. This is your handoff; continue from nextSteps.";
@@ -36,6 +36,42 @@ export function compactHandoffContext(
   }
   if (!handoff) return "";
   return `${COMPACT_NOTE}\n\n<handoff project="${project}">\n${handoff.trim()}\n</handoff>`;
+}
+
+/**
+ * #1109: skill text does not survive a compact, so a compacted captain gets the captain-ops core
+ * (trigger table + core-only rules) back. Read at runtime from the synced plugin skill, the one source.
+ * Fail-open: "" when the file is unreadable or this is not a captain compact start.
+ */
+export function compactCoreContext(
+  payload: unknown,
+  env: NodeJS.ProcessEnv,
+  project: string | null | undefined,
+  skillFile: string = path.join(CONFIG_DIR, "plugin", "skills", "captain-ops", "SKILL.md"),
+): string {
+  if (!isCaptainCompactStart(payload, env, project)) return "";
+  try {
+    const body = fs.readFileSync(skillFile, "utf-8").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+    return body ? `${CORE_NOTE}\n\n<captain-ops>\n${body}\n</captain-ops>` : "";
+  } catch {
+    return "";
+  }
+}
+
+export const CORE_NOTE = "Context was just compacted. This is your captain-ops core: read the reference file its trigger table names before each action.";
+
+/** Like appendAdditionalContext, but puts `extra` FIRST so a long later part can never cut it off. */
+export function prependAdditionalContext(out: string, extra: string, hookEventName = "SessionStart"): string {
+  if (!extra) return out;
+  if (!out) return appendAdditionalContext("", extra, hookEventName);
+  try {
+    const o = JSON.parse(out);
+    const prev = o?.hookSpecificOutput?.additionalContext;
+    o.hookSpecificOutput = { ...o.hookSpecificOutput, additionalContext: prev ? `${extra}\n\n${prev}` : extra };
+    return JSON.stringify(o);
+  } catch {
+    return out;
+  }
 }
 
 /** Fold extra context into a hook-output JSON string (or create one) so stdout stays a single JSON document. */
