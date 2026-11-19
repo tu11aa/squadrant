@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-19
+
+Captain context. Captains load a short startup skill instead of the whole 43 KB playbook, the playbook is split into a core plus on-demand reference files that survive `/compact`, roles can carry their own environment variables (for example Claude Code code mode for crews only), and a captain can restart itself into a fresh session. PRs #1139, #1140, #1144, #1146.
+
+**Upgrade:** after installing, run `squadrant heal daemon` (installs the new `captain-core` SessionStart hook), then relaunch captains to pick up the new startup skill and templates.
+
+### Added
+
+- **`captain-startup` skill.** Captain startup loads only the 4-step contract (facts, branch-state flags, live crews, handoff once) plus the short `captain-ops` core; the launch prompt and both captain templates point to it. Startup context in an end-to-end check: ~17.9k → ~2.7k tokens added during the startup turn. `handoff facts` and `read-handoff.sh` must run in sequence, never in parallel, so the handoff is printed once (#1142, #1109, #1144).
+- **Per-role environment variables.** `defaults.roles.<role>.env` (captain, crew, side, command; threads use the captain's) is passed to that role's agent process at launch, for every agent. `SQUADRANT_*` keys and invalid names are ignored and reported by `squadrant config check`; absent ⇒ the launch line is unchanged. A launch-time variable overrides `~/.claude/settings.json` `env`, so `"captain": { "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0" } }` keeps Claude Code code mode for crews only (#1143, #1146).
+- **`squadrant captain restart <project>` and `/squadrant:restart` (`/squadrant:rs`).** The skill writes the handoff and daily log, then a detached helper waits until the captain is idle, closes its workspace and runs `launch --fresh`; the new session resumes from the handoff. Never run `launch <project> --fresh` from the captain's own pane (#1137, #1139).
+
+### Changed
+
+- **`captain-ops` split into a core and reference files.** `SKILL.md` is now a ~2.7 KB core holding the one trigger table (which reference file to read before each action) and the rules that live only there; `spawning`, `briefs`, `coordination`, `question-triage`, `review-gate`, `status-board`, `shutdown`, `knowledge` and `cross-project` are read on demand. Text projections (AGENTS.md and similar) append the reference files; the opencode skill sync copies them. The stale Task Master section and text that only repeated the captain template were removed; every rule is accounted for in `docs/specs/2026-11-19-captain-ops-split-inventory.md` (#1109, #1144).
+- **Captain behavior survives `/compact`.** On SessionStart(source=compact) a captain gets the `captain-ops` core back through its own hook command, `squadrant hooks claude captain-core`, with its own context string so a large handoff cannot cut it off. Both captain templates also tell a compacted captain to reload `captain-ops` if the trigger table is missing (agents without a compact hook rely on this) (#1109, #1144).
+
+### Fixed
+
+- **Crew spawn blocked by the folder-trust dialog.** Claude Code asks to trust each new `--add-dir` folder, which stopped every crew before its first turn. `squadrant crew spawn` now pre-trusts squadrant's state root once in `~/.claude.json` (inherited by every per-task brief folder) (#1138, #1140).
+
 ## [0.37.0] - 2026-11-16
 
 Token budget. Large idle crews get compacted while their prompt cache is still warm instead of being reused at full size, a crew compact you asked for either runs or you are told it did not, and the operator's output style reaches every Claude session squadrant launches. PRs #1131, #1132, #1133.
