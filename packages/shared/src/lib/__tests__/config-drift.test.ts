@@ -123,6 +123,17 @@ describe("detectDrift \u2014 invalid", () => {
     expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.roles.crew.backend")).toBe(true);
   });
 
+  it("#1143: flags bad role env names, non-string values, SQUADRANT_* keys and a non-object env", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).crew = { agent: "claude", env: { "BAD NAME": "1", NUM: 1, SQUADRANT_ROLE: "x", OK: "0" } };
+    (u.defaults.roles as any).captain = { agent: "claude", env: ["A"] };
+    const paths = detectDrift(u, getDefaultConfig()).filter((i) => i.kind === "invalid").map((i) => i.path);
+    expect(paths).toEqual(expect.arrayContaining([
+      "defaults.roles.crew.env.BAD NAME", "defaults.roles.crew.env.NUM", "defaults.roles.crew.env.SQUADRANT_ROLE", "defaults.roles.captain.env",
+    ]));
+    expect(paths).not.toContain("defaults.roles.crew.env.OK");
+  });
+
   it("flags a router backend selected with no defaults.router", () => {
     const u = userConfig();
     (u.defaults.roles as any).crew = { agent: "claude", backend: "proxy" };

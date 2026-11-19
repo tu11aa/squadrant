@@ -3,6 +3,8 @@
 // The names are U1's contract (docs/specs/2026-09-11-router-transport-u1-design.md
 // §"Env contract"). Pure — no I/O — so the contract is unit-testable in isolation.
 
+import { resolveRoleEnv } from "@squadrant/shared";
+
 /** cmux's claude wrapper unsets ANTHROPIC_API_KEY / ANTHROPIC_MODEL /
  *  ANTHROPIC_SMALL_FAST_MODEL / CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX
  *  when IN_CMUX=1 unless this is set (#775 precondition 2). Without it the wrapper
@@ -94,6 +96,13 @@ export function renderEnvAssignments(env: Record<string, string>): string {
     .sort()
     .map((key) => `${key}=${ansiCQuote(env[key] ?? "")}`)
     .join(" ");
+}
+
+/** #1143: `defaults.roles.<role>.env` as a launch-line prefix ("" when none, trailing space otherwise).
+ *  Place it BEFORE squadrant-owned assignments; SQUADRANT_* keys are dropped by resolveRoleEnv anyway. */
+export function roleEnvPrefix(env: Record<string, string> | undefined): string {
+  const usable = resolveRoleEnv(env);
+  return Object.keys(usable).length > 0 ? `${renderEnvAssignments(usable)} ` : "";
 }
 
 function ansiCQuote(value: string): string {

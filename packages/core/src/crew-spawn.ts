@@ -33,7 +33,7 @@ import {
   isolatedSessionEnvPrefix,
 } from "@squadrant/shared";
 import { resolveBackend, assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
-import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } from "./router/env.js";
+import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments, roleEnvPrefix } from "./router/env.js";
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -703,7 +703,7 @@ export async function runCrewSpawn(
     // PermissionRequest instead of yielding to the built-in classifier.
     const gateEnv = backend !== "native" ? " SQUADRANT_GATE=on" : "";
     // #1046: an isolated config also carries SQUADRANT_CONFIG so the crew reaches its own daemon.
-    const envPrefix = `${isolatedSessionEnvPrefix()}SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}${gateEnv}`;
+    const envPrefix = `${roleEnvPrefix(config.defaults.roles?.crew?.env)}${isolatedSessionEnvPrefix()}SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}${gateEnv}`;
     // Render the router env OUTSIDE `nice`: the shell must process the
     // assignments before exec, and `nice -n 10 FOO=bar cmd` is invalid (nice
     // would try to exec the literal `FOO=bar`). Empty for `native`, so a native
@@ -827,7 +827,7 @@ export async function runCrewSpawn(
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
-    const envPrefix = `${isolatedSessionEnvPrefix()}SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `${roleEnvPrefix(config.defaults.roles?.crew?.env)}${isolatedSessionEnvPrefix()}SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, boundedLaunchLine(`cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`));
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const opencodeResult = await deps.sendFirstTurn(pane, frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "opencode")}`, { project: input.project, taskId: rec.id }), preLaunchScreen, {

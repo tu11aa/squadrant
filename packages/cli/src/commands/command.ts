@@ -14,6 +14,7 @@ import {
   CapabilityRegistry,
 } from "@squadrant/agents";
 import { resolveCmuxBin } from "@squadrant/shared";
+import { roleEnvPrefix } from "@squadrant/core";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
@@ -77,7 +78,7 @@ export async function runCommandSpawn(input: CommandSpawnInput): Promise<PaneRef
   const direction = input.direction ?? "right";
   const title = `🤖 command-${input.task}`;
   const pane = await runtime.newPane({ workspaceId, direction, title });
-  await runtime.sendToPane(pane, cliCommand);
+  await runtime.sendToPane(pane, `${roleEnvPrefix(config.defaults.roles?.command?.env)}${cliCommand}`);
   return pane;
 }
 
