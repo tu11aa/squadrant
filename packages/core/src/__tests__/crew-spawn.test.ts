@@ -279,6 +279,28 @@ describe("runCrewSpawn", () => {
       );
     });
 
+    // #1143: roles.crew.env reaches the launch line; SQUADRANT_* from it is dropped; absent ⇒ untouched.
+    it("prefixes the crew launch line with roles.crew.env and drops SQUADRANT_* keys", async () => {
+      const config = makeConfig({
+        roles: { crew: { agent: "claude", env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "1", SQUADRANT_CREW_TASK_ID: "evil" } } },
+      });
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+      const typed = (runtime.sendToPane as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(typed).toContain("CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=$'1' ");
+      expect(typed).not.toContain("evil");
+      expect(typed).toContain("SQUADRANT_CREW_TASK_ID=task-001");
+    });
+
+    it("adds nothing to the crew launch line when roles.crew.env is absent", async () => {
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+      const typed = (runtime.sendToPane as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(typed).not.toContain("CLAUDE_CODE_EXPERIMENTAL_CODE_MODE");
+    });
+
     // #1090: the typed launch line must never depend on fitting in the pty's
     // 1024-byte canonical buffer, however long the cwd / flags are.
     it("types a short line when the crew launch command is longer than the tty limit", async () => {

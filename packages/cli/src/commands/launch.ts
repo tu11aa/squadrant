@@ -11,7 +11,7 @@ import os from "node:os";
 import chalk from "chalk";
 import { loadConfig, isolatedConfigDir, stateRoot as defaultStateRoot, sessionsPath, legacySessionsPath, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
-import { ensureClaudeTrust, trustSpellings } from "./dev.js";
+import { ensureClaudeTrust, trustSpellings } from "../lib/claude-trust.js";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd, hasClaudeSession,
@@ -23,7 +23,7 @@ import {
 import {
   launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
   readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
-  discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments,
+  discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments, roleEnvPrefix,
   decideOpencodeGateWrap, buildOpencodeGateRunCommand,
   type CaptainAddress, type CaptainRouteSetup,
 } from "@squadrant/core";
@@ -248,7 +248,7 @@ export const launchCommand = new Command("launch")
 
       let initialPrompt: string | undefined;
       if (role === "captain") {
-        initialPrompt = "Run your startup checklist: use the squadrant:captain-ops skill, complete all startup steps, then report ready.";
+        initialPrompt = "Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready.";
       } else if (role === "command") {
         initialPrompt = "Run your startup checklist: use the squadrant:command-ops skill, complete your daily briefing, then report ready.";
       }
@@ -389,7 +389,7 @@ export const launchCommand = new Command("launch")
             const gatePrefix = route && Object.keys(route.env).length > 0
               ? `${renderEnvAssignments(route.env)} `
               : "";
-            const cmd = `${gatePrefix}${effectiveCmd}`;
+            const cmd = `${roleEnvPrefix(roleConfig?.env)}${gatePrefix}${effectiveCmd}`;
             return captainOpencodeConfigPath
               ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${cmd}`
               : cmd;

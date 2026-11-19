@@ -55,6 +55,23 @@ describe("syncOpencodeSkills", () => {
     expect(fs.existsSync(path.join(dest, "captain-ops", OPENCODE_SKILL_MARKER))).toBe(true);
   });
 
+  it("copies a skill's reference files, refreshes them and drops removed ones (#1109)", () => {
+    addSourceSkill("captain-ops");
+    write(path.join(src, "captain-ops", "spawning.md"), "v1");
+    write(path.join(src, "captain-ops", "old.md"), "gone soon");
+    syncOpencodeSkills({ sourceSkillsDir: src, skillsRoot: dest });
+    expect(read(path.join(dest, "captain-ops", "spawning.md"))).toBe("v1");
+
+    write(path.join(src, "captain-ops", "spawning.md"), "v2");
+    fs.rmSync(path.join(src, "captain-ops", "old.md"));
+    const second = syncOpencodeSkills({ sourceSkillsDir: src, skillsRoot: dest });
+
+    expect(second.written).toEqual(["captain-ops"]);
+    expect(read(path.join(dest, "captain-ops", "spawning.md"))).toBe("v2");
+    expect(fs.existsSync(path.join(dest, "captain-ops", "old.md"))).toBe(false);
+    expect(syncOpencodeSkills({ sourceSkillsDir: src, skillsRoot: dest }).unchanged).toEqual(["captain-ops"]);
+  });
+
   it("skips source skills without a loadable name/description frontmatter", () => {
     addSourceSkill("captain-ops");
     write(path.join(src, "takeover", "SKILL.md"), "# Takeover\n\nno frontmatter\n");

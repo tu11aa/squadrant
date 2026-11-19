@@ -1,4 +1,4 @@
-import { isBackendMode, isRouterKind, type RouterConfig, type BackendMode } from "../config.js";
+import { isBackendMode, isRouterKind, roleEnvProblem, type RouterConfig, type BackendMode } from "../config.js";
 import type { SquadrantConfig } from "../config.js";
 
 export type DriftKind = "missing" | "deprecated" | "changed-default" | "invalid";
@@ -125,6 +125,19 @@ export function detectDrift(user: SquadrantConfig, def: SquadrantConfig): DriftI
         current: asn.agent,
         note: `references agent '${asn.agent}' which is not defined in agents`,
       });
+    }
+  }
+
+  for (const [role, asn] of Object.entries((user.defaults?.roles ?? {}) as Record<string, { env?: unknown }>)) {
+    const env = asn?.env;
+    if (env === undefined) continue;
+    if (typeof env !== "object" || env === null || Array.isArray(env)) {
+      items.push({ path: `defaults.roles.${role}.env`, kind: "invalid", severity: "warn", current: env, note: "env must be an object of string values" });
+      continue;
+    }
+    for (const [k, v] of Object.entries(env)) {
+      const problem = roleEnvProblem(k, v);
+      if (problem) items.push({ path: `defaults.roles.${role}.env.${k}`, kind: "invalid", severity: "warn", current: v, note: problem });
     }
   }
 

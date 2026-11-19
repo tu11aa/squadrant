@@ -17,9 +17,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const buildAgentCmdMock = vi.hoisted(() => vi.fn(() => ({ agentName: "claude", cmd: ["claude"], env: {} })));
+const captainEnv = vi.hoisted(() => ({ value: undefined as Record<string, string> | undefined }));
+const launchedCmds = vi.hoisted(() => [] as unknown[]);
 const launchOneWorkspaceMock = vi.hoisted(() =>
   vi.fn(async (opts: { agentCmdFactory: (forceFresh: boolean) => unknown }) => {
-    opts.agentCmdFactory(false);
+    launchedCmds.push(opts.agentCmdFactory(false));
   }),
 );
 
@@ -75,6 +77,7 @@ vi.mock("@squadrant/core", () => ({
     backend: "native" as const, model: o.model, permissionMode: o.configuredPermissionMode, env: {},
   })),
   renderEnvAssignments: vi.fn(() => ""),
+  roleEnvPrefix: vi.fn((e?: Record<string, string>) => (e ? "ROLE_ENV " : "")),
   decideOpencodeGateWrap: vi.fn(() => ({ wrap: false, warn: false, reason: "test-default" })),
   buildOpencodeGateRunCommand: vi.fn(() => "squadrant gate opencode-run --port 0"),
 }));
@@ -91,7 +94,7 @@ vi.mock("@squadrant/shared", async () => {
         alpha: { captainName: "alpha-captain", path: "/tmp/alpha", spokeVault: "/tmp/alpha/.spoke" },
         beta: { captainName: "beta-captain", path: "/tmp/beta", spokeVault: "/tmp/beta/.spoke" },
       },
-      defaults: { captainChannel: "on", permissions: {}, roles: {}, models: {} },
+      defaults: { captainChannel: "on", permissions: {}, roles: captainEnv.value ? { captain: { agent: "claude", env: captainEnv.value } } : {}, models: {} },
     }),
     resolveHome: (p: string) => p,
     ensureWorkspace: vi.fn(),
@@ -107,6 +110,20 @@ describe("launchCommand --all (#706 per-project captain socket wiring)", () => {
   beforeEach(() => {
     buildAgentCmdMock.mockClear();
     launchOneWorkspaceMock.mockClear();
+    launchedCmds.length = 0;
+    captainEnv.value = undefined;
+  });
+
+  it("#1143: prefixes the captain launch command with roles.captain.env, and leaves it alone when absent", async () => {
+    const { launchCommand } = await import("../launch.js");
+    await launchCommand.parseAsync(["node", "squadrant", "launch", "--all"]);
+    expect(launchedCmds.every((c) => !String(c).startsWith("ROLE_ENV "))).toBe(true);
+
+    launchedCmds.length = 0;
+    captainEnv.value = { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: "0" };
+    await launchCommand.parseAsync(["node", "squadrant", "launch", "--all"]);
+    expect(launchedCmds).toHaveLength(2);
+    expect(launchedCmds.every((c) => String(c).startsWith("ROLE_ENV "))).toBe(true);
   });
 
   it("gives each captain a distinct socket path derived from its own project name", async () => {

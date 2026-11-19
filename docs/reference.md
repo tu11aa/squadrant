@@ -33,6 +33,7 @@ guided first run — come back here when you need the details.
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
 - [Captain rollover](#captain-rollover-1010)
+- [Captain restart](#captain-restart-1137)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
 - [MCP server (`squadrant mcp`)](#mcp-server-squadrant-mcp-1029)
@@ -47,6 +48,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant captain restart <project> [--focus]` | Restart the project's Claude captain into a fresh session once its turn ends; safe to run from the captain's own pane. Returns immediately. See [Captain restart](#captain-restart-1137). |
 | `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done, from the moment the crew is idle (a busy or blocked crew's sends go through). See [Crew compact](#crew-compact-1051). |
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
@@ -150,6 +152,27 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 - An invalid level fails fast with the list of valid values, rather than being passed through for the claude CLI to warn about and silently ignore.
 
 > **Not the same thing as [`defaults.effort`](#effort-dial-tokenomics).** `defaults.effort` (`max|balance|low`, set via `squadrant effort`) is the *crew tokenomics dial* — a global, captain-discretion signal about how aggressively to spend tokens. `defaults.roles.<role>.thinking` is a per-role reasoning-depth setting emitted as a CLI flag. They share the word `max` and nothing else; changing one does not affect the other.
+
+### Per-role env (`roles.<role>.env`, #1143)
+
+Each role can carry extra environment variables, set on that role's agent process at launch. It is agent-agnostic (claude, codex, opencode, gemini all go through the same launch-line prefix); squadrant sets no default.
+
+```json
+{
+  "defaults": {
+    "roles": {
+      "captain": { "agent": "claude", "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0" } },
+      "crew":    { "agent": "claude", "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1" } }
+    }
+  }
+}
+```
+
+- Applies to `captain` (also its discussion threads, which use the captain role), `crew`, `side` and `command`. Absent ⇒ the launch line is identical to today.
+- **`SQUADRANT_*` keys are ignored** — squadrant-owned variables always win. For a routed crew/captain the router env (`ANTHROPIC_*`) is also applied after role env.
+- `squadrant config check` reports invalid names, non-string values, `SQUADRANT_*` keys and a non-object `env`.
+- Role env is not written to `~/.claude/settings.json`; that file's `env` block is still owned by [`defaults.claudeEnv`](#config) (#615). Takes effect on the next launch/spawn.
+- **Precedence vs `~/.claude/settings.json` `env` (verified, claude 2.1.328):** a launch-time env var wins over settings.json, and `"0"` turns code mode off. With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` in settings.json, a headless `claude -p` printed the "Code Mode (experimental) isn't available" warning (flag on); launched with `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0` the warning disappeared (flag off). So per-role env works with the key still in settings.json; to make crews-on / captains-off explicit, remove the key from settings.json and set it per role.
 
 ### Provider Presets (`squadrant init`)
 
@@ -659,7 +682,7 @@ KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~
 - `workspacePath(project)` in `@squadrant/shared` is the one helper. `SQUADRANT_WORKSPACE_DIR` overrides the root (`SQUADRANT_ARCHIVE_DIR` does the same for `~/squadrant/archive`).
 - `projects add` and `launch` create the dirs. New projects get no Obsidian spoke scaffold (and no `status.md`, #538).
 - The scripts keep their argv: `write-handoff.sh`, `read-handoff.sh` and `record-side-handoff.sh` take a project name, a workspace path, or an old spoke path, and use only its basename as the project. (A custom `--spoke` path whose basename is not the project name maps to the wrong workspace dir.)
-- **`handoff facts` checkpoint and size.** The checkpoint is the newest of `workspace/<p>/handoffs/*.json` and the not-yet-archived `workspace/<p>/handoff.json` (by mtime), because facts runs before `read-handoff.sh` archives the live file. When the live file wins, the output reports `checkpoint.live: true` with `content: null` (the captain reads that file separately); an archived checkpoint is still printed in full. The claude-mem section keeps `latestSessionSummary` and the 5 newest decisions, each text capped at 600 characters.
+- **`handoff facts` checkpoint and size.** The checkpoint is the newest of `workspace/<p>/handoffs/*.json` and the not-yet-archived `workspace/<p>/handoff.json` (by mtime), because facts runs before `read-handoff.sh` archives the live file. When the live file wins, the output reports `checkpoint.live: true` with `content: null` (the captain reads that file separately); an archived checkpoint is still printed in full (the fallback when no `handoff.json` exists). The captain startup contract prints the handoff once: use `checkpoint.content` when set, else run `read-handoff.sh` (#1142). The claude-mem section keeps `latestSessionSummary` and the 5 newest decisions, each text capped at 600 characters.
 - **Dual-read for one version.** `read-handoff.sh` falls back to `handoff.json` in the old spoke (the path passed in, or `~/squadrant-hub/spokes/<p>/`). `handoff facts` reads checkpoints and session records from both, and `standup`/`retro` read daily logs from both.
 - Learnings, captured skills and the wiki stay in the spoke until KB phase 4b. `spokeVault`/`hubVault` stay in the config as deprecated aliases. `record-learning.sh` / `capture-skill.sh` / `wiki-ingest.sh` create a missing spoke dir; `wiki-query.sh` / `wiki-log.sh` are a no-op on one.
 
@@ -986,6 +1009,7 @@ squadrant dev down                                    # kill it, delete everythi
 - The CLI skips the runtime sync into `~/.config/squadrant`, the opencode skills projection, the config version stamp and `ensureDaemon` (launchd). `projects add`/`config` never kickstart launchd, and `heal daemon`/`heal captain` refuse.
 - Claude captains and crews launch with `SQUADRANT_CONFIG` (and `PATH` with `bin/` when the shim exists) in their env, plus `--setting-sources project,local --settings <config dir>/claude-settings.json --mcp-config <squadrant server>`. Dropping the `user` source is what hides the production hooks. It also drops user-scope MCP servers, which is why the squadrant server is passed back explicitly. Routed backends (`direct`/`proxy`) are refused under an isolated config: both need the one `--settings` slot.
 - **Trust (#1090).** `dev up` pre-trusts the throwaway project in `~/.claude.json` (`projects[<path>].hasTrustDialogAccepted: true`, both the `/var/…` and resolved `/private/var/…` spellings), and `launch` re-asserts it right before the captain boots, because every running Claude Code session rewrites that shared file. Crew worktrees inherit it from the project. `dev down` prunes every entry under the root. Before this fix nothing pre-trusted the project, so the captain opened on the folder-trust dialog every time (crews only got past it because spawn answers the panel).
+- **Crew brief folder (#1138).** A Claude crew gets its brief via `--add-dir=<stateRoot>/<project>/<taskId>/brief`, a new folder per task, and Claude Code 2.1.326 asks "Is this a directory you created or one you trust?" for each unseen `--add-dir` folder, which blocked every crew before its first turn. `squadrant crew spawn` (CLI side, so it works on a global install with no daemon restart) now pre-trusts squadrant's state root once in `~/.claude.json` (`projects[<stateRoot>].hasTrustDialogAccepted`, both path spellings); trust is inherited by everything under it, so no per-task entry is added. The write is one atomic read-modify-write that keeps every other key, and a failure only warns. Under a dev daemon the state root sits inside the dev root, so `dev down` prunes it.
 - **Launch lines (#1090).** A launch line typed into a fresh shell is cut at the pty's 1024-byte canonical limit, and a crew line (`cd … && env … claude --settings … --mcp-config … --add-dir …`) exceeds it on a long root like the default `$TMPDIR/squadrant-dev`. Any captain, crew or side-session line over 700 bytes is written to a 0600 file under `<state dir>/launch/` and a short `eval "$(cat <file> && rm -f <file>)"` is typed instead (`boundedLaunchLine` in `@squadrant/core`): the shell runs the identical text, and the file is gone as soon as it is read. Shorter lines are typed unchanged.
 
 **Why `--settings`, not `CLAUDE_CONFIG_DIR` or a temp `HOME`.** Both of those give claude a fresh config dir, and claude reports `Not logged in · Please run /login` (checked with claude 2.1.310). `--setting-sources` + `--settings` keeps the login and `~/.claude.json`.
@@ -1009,7 +1033,26 @@ squadrant dev down                                    # kill it, delete everythi
     #12 task.done (c1): CREW DONE c1 — shipped
     #13 task.done (c2): CREW BLOCKED c2
   ```
-- **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
+- **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. The captain-ops core (`plugin/skills/captain-ops/SKILL.md`, read at runtime from the synced `~/.config/squadrant/plugin/skills/`, #1109) is injected too, because skill text does not survive a compact. It has its **own** hook command, `squadrant hooks claude captain-core` (a second `SessionStart` entry next to `session-start` and `profile-session-start`, installed and repaired by `installClaudeHooks`), so it is its own `additionalContext` string: Claude cuts one string at ~10k characters (a 20 KB combined output was replaced by a persisted-output preview that lost most of the core and the handoff), and the core must never share that budget with the rules, the handoff or the ledger. The command prints only the core, only for a captain on `source: "compact"`, and nothing otherwise. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand. Only the Claude hook exists for this: opencode/codex/gemini captains have no compact SessionStart here, so their fallback is the captain template sentence ("after a compact, if the captain-ops trigger table is not in your context, load captain-ops before your next action"), which the Claude template carries as well.
+
+## Captain startup and the captain-ops split (#1142, #1109)
+
+A captain loads `squadrant:captain-startup` (the 4-step contract: facts → branchState flags → live crews → handoff once) and then the short `squadrant:captain-ops` core (~2.7 KB), about 1.1k tokens in all instead of 43 KB. The core holds the **one** trigger table: each action → the reference file in `plugin/skills/captain-ops/` to read first (`spawning.md`, `briefs.md`, `coordination.md`, `question-triage.md`, `review-gate.md`, `status-board.md`, `shutdown.md`, `knowledge.md`, `cross-project.md`) plus the skills to use (`prompt-master`, `karpathy-principles`, `rules-ops`, `human-review-guide`, `daily-log`, `wiki-ops`, `add-pick-crew-rule`, `set-effort`, `rollover`, `restart`). Hard rules stay in the captain template. The launch init prompt (`launch.ts`, `spawn-workspace.sh`) names `captain-startup`. Dropped as stale or duplicated: the Task Master section (not installed), and the sections that repeat the template (message senders, MCP tools, crew setup); the OpenSpace capture/fix/quality sections are condensed into `knowledge.md`. Every old rule and where it went: [`docs/specs/2026-11-19-captain-ops-split-inventory.md`](specs/2026-11-19-captain-ops-split-inventory.md).
+
+Non-Claude agents reach the reference files the same way: text projections (AGENTS.md, GEMINI.md, Cursor, Codex) append a skill's sibling `*.md` files as "Reference: <file>" sections; the opencode skill sync copies them beside `SKILL.md`.
+
+## Captain restart (#1137)
+
+`/squadrant:restart` (alias `/squadrant:rs`) restarts a Claude captain into a **new session**, so a changed system prompt (operator style, profile edits, a template change) takes effect. Rollover keeps the same session and compacts it; restart replaces it. In order, the captain writes the consolidated handoff (same rules as rollover; never `read-handoff.sh`), writes the daily log, runs `squadrant captain restart <project>` as its last action and ends the turn with one short line.
+
+`launch <project> --fresh` cannot do this from the captain's pane: it closes the captain workspace first, which kills its own terminal and the launch half-way. `captain restart` runs the relaunch from outside the workspace:
+
+- **Detached helper.** The command takes the per-project lock, spawns `squadrant captain restart-run <project>` (hidden) with `detached: true` (its own session and process group, so closing the captain's terminal does not reach it), stdio appended to `<state dir>/<project>/captain-restart.log`, and returns at once with the helper pid and log path. The helper's env drops the captain pane/session identity (`CMUX_WORKSPACE_ID`, `CMUX_SURFACE_ID`, `CMUX_PANEL_ID`, `CMUX_TAB_ID`, `CLAUDE_CODE_SESSION_ID`, the peer socket vars, …): that pane is about to close.
+- **Idle check.** Every second the helper finds the captain pane (workspace and tab named after the captain) and requires, on 3 consecutive polls: (1) cmux's hook store (`~/.cmuxterm/claude-hook-sessions.json`, written by cmux's own Claude hooks) shows the session active on that surface (`activeSessionsBySurface`) with `agentLifecycle` `idle` (Stop fired) or `backgroundWorkPending`, not `running` or `needsInput` (an open permission/question prompt); and (2) the pane itself reads idle the way `captain compact` checks it: no working spinner, no option modal, and an empty input box (cmux `surface.input_state` when available, else the screen parse; a draft means someone is typing and is never thrown away). A surface with no hook-store record falls back to the pane check alone. A missing workspace counts as "not idle", never as "gone", so a cmux read error cannot start a second captain beside the old one.
+- **Relaunch.** Once idle it runs `squadrant launch <project> --fresh --headless`, which closes the old workspace (unpin + close), waits for the old captain to release its peer socket (#1104) and spawns the new one with the usual startup prompt. With `--focus` the helper then switches cmux to the new workspace. The helper exits; the lock is removed.
+- **Guards.** One pending restart per project: `<state dir>/<project>/captain-restart.lock` holds the helper pid; a second request while that pid is alive prints `⏸ A restart for '<project>' is already pending …` and starts nothing (a lock whose pid is dead is stale and replaced). If the captain is not idle within 10 minutes the helper gives up without touching anything and sends `captain restart <project>: gave up after 10 min …` to the operator (configured notifier) and to the captain (`ping` path: peer channel, else mailbox). A failed `launch` sends the same kind of notice. Claude captains only: for any other captain agent the command refuses with the reason (the idle check reads Claude Code's hook state and pane chrome); relaunch those with `launch --fresh` from another terminal.
+- **No daemon change.** The helper uses only the CLI, cmux and files the daemon already writes, so it works with whatever daemon version is running.
+- **Handoff on start.** The fresh session gets the normal startup prompt, and the captain template's startup checklist reads the handoff (`read-handoff.sh`, or `checkpoint.content` from `handoff facts` when set). The `SessionStart` re-injection above is for `source: "compact"` only and is not involved.
 
 ## Context meter & rollover suggestions (#1015)
 

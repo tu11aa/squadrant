@@ -200,7 +200,7 @@ fi
 # Send initial prompt to trigger startup checklist (Claude agents only)
 if [ "$AGENT" = "claude" ]; then
   if [ "$ROLE" = "captain" ]; then
-    (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the squadrant:captain-ops skill, complete all startup steps, then report ready." 2>/dev/null) &
+    (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready." 2>/dev/null) &
   elif [ "$ROLE" = "command" ]; then
     (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the squadrant:command-ops skill, complete your daily briefing, then report ready." 2>/dev/null) &
   fi

@@ -285,7 +285,7 @@ describe("installClaudeHooks — #872 absolute CLI command", () => {
 
     const result = JSON.parse(written[0].content);
     expect(commandsOf(result.hooks.Stop)).toEqual(["my-tool on-stop", `${CLI} hooks claude stop`]);
-    expect(commandsOf(result.hooks.SessionStart)).toEqual([`${CLI} hooks claude session-start`, `${CLI} hooks claude profile-session-start`]);
+    expect(commandsOf(result.hooks.SessionStart)).toEqual([`${CLI} hooks claude session-start`, `${CLI} hooks claude profile-session-start`, `${CLI} hooks claude captain-core`]);
     expect(commandsOf(result.hooks.PermissionRequest)).toEqual([`${CLI} gate claude permission-request`]);
     expect(log.mock.calls.some(([m]) => /repointed 3 squadrant hook/.test(m))).toBe(true);
   });
@@ -1117,6 +1117,27 @@ describe("NativeHookSource — health() (B4)", () => {
     expect(src.health()).toEqual({ active: true, error: null });
     src.stop();
     expect(src.health()).toEqual({ active: false, error: null });
+  });
+});
+
+// #1109: the captain-ops core has its own SessionStart command (own additionalContext string).
+describe("installClaudeHooks — captain-core (#1109)", () => {
+  const CORE = `${HOOK_CMD} claude captain-core`;
+  const cmds = (s: Record<string, any>) => (s.hooks.SessionStart as { hooks: { command: string }[] }[]).flatMap((e) => e.hooks.map((h) => h.command));
+
+  it("adds the entry and repairs it when missing, idempotently", () => {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    const s = JSON.parse(written[0].content);
+    expect(cmds(s)).toContain(CORE);
+    s.hooks.SessionStart = s.hooks.SessionStart.filter((e: { hooks: { command: string }[] }) => !e.hooks.some((h) => h.command === CORE));
+    const second = makeInstallOpts({ existingSettings: s });
+    installClaudeHooks(second.opts);
+    const repaired = JSON.parse(second.written[0].content);
+    expect(cmds(repaired).filter((c) => c === CORE)).toHaveLength(1);
+    const third = makeInstallOpts({ existingSettings: repaired });
+    installClaudeHooks(third.opts);
+    expect(third.written).toHaveLength(0);
   });
 });
 

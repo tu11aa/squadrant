@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { compactHandoffContext, appendAdditionalContext, COMPACT_NOTE } from "../compact-handoff.js";
+import { compactHandoffContext, compactCoreContext, appendAdditionalContext, COMPACT_NOTE, CORE_NOTE } from "../compact-handoff.js";
 
 let home: string;
 beforeEach(() => { home = fs.mkdtempSync(path.join(os.tmpdir(), "compact-handoff-")); });
@@ -47,5 +47,40 @@ describe("appendAdditionalContext", () => {
     expect(o.hookSpecificOutput.additionalContext).toBe("RULES\n\nHANDOFF");
     expect(JSON.parse(appendAdditionalContext("", "HANDOFF")).hookSpecificOutput.additionalContext).toBe("HANDOFF");
     expect(appendAdditionalContext(rules, "")).toBe(rules);
+  });
+});
+
+// #1109: the captain-ops core must survive a compact, ahead of a large handoff.
+describe("compactCoreContext", () => {
+  const skill = () => {
+    const f = path.join(home, "SKILL.md");
+    fs.writeFileSync(f, "---\nname: captain-ops\ndescription: d\n---\n\n# core\n| Before you… | Read first |\nCORE-END\n");
+    return f;
+  };
+
+  it("returns the core (without frontmatter) for a captain compact start", () => {
+    const out = compactCoreContext({ source: "compact" }, cap, "demo", skill());
+    expect(out).toContain(CORE_NOTE);
+    expect(out).toContain("CORE-END");
+    expect(out).not.toContain("description: d");
+  });
+
+  it("returns nothing for crews, other sources, plain sessions or a missing file", () => {
+    const f = skill();
+    expect(compactCoreContext({ source: "compact" }, { ...cap, SQUADRANT_CREW_TASK_ID: "t" }, "demo", f)).toBe("");
+    expect(compactCoreContext({ source: "startup" }, cap, "demo", f)).toBe("");
+    expect(compactCoreContext({ source: "compact" }, {}, "demo", f)).toBe("");
+    expect(compactCoreContext({ source: "compact" }, cap, "demo", path.join(home, "nope.md"))).toBe("");
+  });
+
+  it("the real shipped core is injected and carries the trigger table", () => {
+    const real = path.resolve(__dirname, "../../../../../plugin/skills/captain-ops/SKILL.md");
+    expect(compactCoreContext({ source: "compact" }, cap, "demo", real)).toContain("Trigger table");
+  });
+
+  it("a crew compact start gets neither the core nor the handoff", () => {
+    fs.writeFileSync(path.join(home, "handoff.json"), JSON.stringify(handoff));
+    const crew = { ...cap, SQUADRANT_CREW_TASK_ID: "t" } as NodeJS.ProcessEnv;
+    expect(compactCoreContext({ source: "compact" }, crew, "demo", skill()) + compactHandoffContext({ source: "compact" }, crew, "demo", ws)).toBe("");
   });
 });

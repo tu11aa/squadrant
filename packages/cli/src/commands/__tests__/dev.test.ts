@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureClaudeTrust, pruneClaudeProjects } from "../dev.js";
+import { ensureClaudeTrust, ensureStateRootTrust, pruneClaudeProjects } from "../../lib/claude-trust.js";
 
 describe("pruneClaudeProjects (#1046 dev down)", () => {
   const setup = (data: unknown) => {
@@ -85,5 +85,23 @@ describe("ensureClaudeTrust (#1090 dev up / launch)", () => {
     writeFileSync(file, "{not json");
     expect(ensureClaudeTrust(["/p"], file)).toBe(0);
     expect(readFileSync(file, "utf8")).toBe("{not json");
+  });
+});
+
+describe("ensureStateRootTrust (#1138 crew brief folder)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("trusts the state root once so every per-task brief folder under it inherits it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-json-"));
+    const file = join(dir, ".claude.json");
+    writeFileSync(file, JSON.stringify({ theme: "dark", projects: { "/keep": { a: 1 } } }), { mode: 0o600 });
+    const state = join(dir, "state");
+    vi.stubEnv("SQUADRANT_STATE_DIR", state);
+    expect(ensureStateRootTrust(file)).toBeGreaterThan(0);
+    const out = JSON.parse(readFileSync(file, "utf8"));
+    expect(out.theme).toBe("dark");
+    expect(out.projects["/keep"]).toEqual({ a: 1 });
+    expect(out.projects[state].hasTrustDialogAccepted).toBe(true);
+    expect(ensureStateRootTrust(file)).toBe(0);
   });
 });

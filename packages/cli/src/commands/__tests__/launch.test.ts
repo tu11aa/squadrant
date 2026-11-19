@@ -354,7 +354,7 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   // Source of truth: live capture of an Opus 4.8 startup turn (frames g01–g11).
   it("does NOT re-send when the captain is thinking with an unrecognized spinner", async () => {
     const SYNTHESIZING = [
-      "❯ Run your startup checklist: use the squadrant:captain-ops skill",
+      "❯ Run your startup checklist: use the squadrant:captain-startup skill",
       "⏺ Thinking about the startup checklist:",
       "✽ Synthesizing… ",
       HR, "❯ ", HR,

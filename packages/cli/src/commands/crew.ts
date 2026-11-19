@@ -28,6 +28,7 @@ import {
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { sendClaudeFirstTurnViaPeer, watchClaudeCrewBoot } from "../lib/first-turn-peer.js";
+import { ensureStateRootTrust } from "../lib/claude-trust.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { checkCrewSend, crewTokens } from "../lib/crew-context-hint.js";
@@ -75,6 +76,8 @@ export async function fetchRouterCredentials(
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: string; surfaceId: string; workspaceId: string }> {
+  // #1138: claude would open on a folder-trust dialog for the per-task --add-dir brief folder.
+  try { ensureStateRootTrust(); } catch (e) { console.error(chalk.yellow(`claude: could not pre-trust the squadrant state dir — ${(e as Error).message}`)); }
   const config = loadConfig();
   const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(input.project, config);
   const agents = new CapabilityRegistry({
