@@ -10,6 +10,8 @@ vi.mock("node:child_process", () => ({
   execSync: execSyncMock,
 }));
 
+vi.mock("@squadrant/core", () => ({ roleEnvPrefix: () => "" }));
+
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
