@@ -66,14 +66,31 @@ export function runConfigGet(key: string, configPath = DEFAULT_CONFIG_PATH): unk
   return node;
 }
 
+const STRING_MAP_PATH = /^defaults\.(roles\.[^.]+\.env|claudeEnv)\.[^.]+$/;
+
+/** True when the schema says `key` holds a string: an env-map entry, or a field whose default is a string. */
+function isStringField(key: string): boolean {
+  if (STRING_MAP_PATH.test(key)) return true;
+  let node: unknown = getDefaultConfig();
+  for (const p of key.split(".")) {
+    if (node === null || typeof node !== "object") return false;
+    node = (node as Record<string, unknown>)[p];
+  }
+  return typeof node === "string";
+}
+
 /** Write a value at a dotted path, creating intermediate objects as needed.
  *  The value is JSON-parsed when it parses (numbers/bools/arrays); otherwise the
- *  raw string is kept (so `low` stays "low", not a parse error). Persists to disk.
+ *  raw string is kept (so `low` stays "low", not a parse error). On a string-typed
+ *  field (env maps, string defaults) a non-string parse is discarded and the raw
+ *  argument is kept, so `env.X 0` writes "0". The result is validated with the
+ *  `config check` validator first; a new invalid item refuses the write. Persists to disk.
  *  NOTE: this is a generic local CLI surface; the Telegram channel restricts which
  *  keys may be set via WRITABLE_CONFIG_KEYS, so secrets can't be written remotely. */
 export function runConfigSet(key: string, value: string, configPath = DEFAULT_CONFIG_PATH): void {
   let parsed: unknown;
   try { parsed = JSON.parse(value); } catch { parsed = value; }
+  if (typeof parsed !== "string" && isStringField(key)) parsed = value;
   const config = loadConfig(configPath) as unknown as Record<string, unknown>;
   const parts = key.split(".");
   let node = config;
@@ -82,7 +99,10 @@ export function runConfigSet(key: string, value: string, configPath = DEFAULT_CO
     if (node[p] === null || typeof node[p] !== "object") node[p] = {};
     node = node[p] as Record<string, unknown>;
   }
+  const before = new Set(detectDrift(config as unknown as SquadrantConfig, getDefaultConfig()).filter((i) => i.kind === "invalid").map((i) => i.path));
   node[parts[parts.length - 1]] = parsed;
+  const bad = detectDrift(config as unknown as SquadrantConfig, getDefaultConfig()).find((i) => i.kind === "invalid" && !before.has(i.path));
+  if (bad) throw new Error(`invalid: ${bad.path}  (${bad.note ?? "invalid value"})`);
   saveConfig(config as unknown as SquadrantConfig, configPath);
 }
 
@@ -192,7 +212,7 @@ configCommand
   .command("set")
   .description("Write a config value by dotted key (e.g. defaults.effort low)")
   .argument("<key>", "dotted config key")
-  .argument("<value>", "value (JSON-parsed when possible, else a bare string)")
+  .argument("<value>", "value (JSON-parsed when possible, else a bare string; string-typed fields keep the raw text)")
   .option("--no-restart", "skip daemon restart even if the key is daemon-cached")
   .action(async (key: string, value: string, opts: { restart?: boolean }) => {
     try {

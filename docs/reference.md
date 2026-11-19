@@ -292,6 +292,7 @@ OpenRouter ships a native Anthropic Messages endpoint (the "Anthropic skin"), so
    squadrant config set defaults.roles.crew.backend proxy
    squadrant config set defaults.roles.crew.model sonnet
    ```
+   `config set` JSON-parses the value (numbers, booleans, arrays), except on string-typed fields — env maps (`defaults.roles.<role>.env.*`, `defaults.claudeEnv.*`) and fields whose default is a string — where the raw text is kept, so `config set defaults.roles.captain.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE 0` writes `"0"` (the quoted `'"0"'` form still works). The result is validated with the `config check` rules first; a new invalid item (e.g. a `SQUADRANT_*` env key) is refused with the same message and the file is left unchanged (#1149).
 3. **Bounce the daemon** if you edited the file directly (`squadrant shutdown` then relaunch) — the shim is constructed at boot.
 4. **Verify** with the [release checklist](#release-verification-checklist): `squadrant config check` is clean, the shim's `/healthz` is ready, and a routed crew reports the router model.
 5. **Spawn a crew** — `squadrant crew spawn <project> "<task>"` — and confirm it runs on the router model.
