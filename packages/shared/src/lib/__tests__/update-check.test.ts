@@ -68,30 +68,9 @@ describe("detectInstallManager", () => {
 });
 
 describe("formatUpdateNotice", () => {
-  it("renders the one-line actionable notice, defaulting to npm when the install path is unknown", () => {
+  it("points the one-line notice at `squadrant update`", () => {
     expect(formatUpdateNotice("0.16.0", "0.15.0")).toBe(
-      "⬆ squadrant 0.16.0 available (you have 0.15.0) — npm i -g squadrant@latest",
-    );
-  });
-
-  it("prints the pnpm upgrade command when squadrant is a pnpm global install", () => {
-    const pnpmPath = "file:///Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.18.0/node_modules/squadrant/dist/index.js";
-    expect(formatUpdateNotice("0.16.0", "0.15.0", pnpmPath)).toBe(
-      "⬆ squadrant 0.16.0 available (you have 0.15.0) — pnpm add -g squadrant@latest",
-    );
-  });
-
-  it("prints the npm upgrade command when squadrant is an npm global install", () => {
-    const npmPath = "file:///Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/index.js";
-    expect(formatUpdateNotice("0.16.0", "0.15.0", npmPath)).toBe(
-      "⬆ squadrant 0.16.0 available (you have 0.15.0) — npm i -g squadrant@latest",
-    );
-  });
-
-  it("prints the yarn upgrade command when squadrant is a yarn global install", () => {
-    const yarnPath = "file:///Users/me/.config/yarn/global/node_modules/squadrant/dist/index.js";
-    expect(formatUpdateNotice("0.16.0", "0.15.0", yarnPath)).toBe(
-      "⬆ squadrant 0.16.0 available (you have 0.15.0) — yarn global add squadrant@latest",
+      "⬆ squadrant 0.16.0 available (you have 0.15.0) — run `squadrant update`",
     );
   });
 });
@@ -429,15 +408,15 @@ describe("release metadata (#1150)", () => {
       fetchImpl: async () => ({ version: "0.2.0", squadrantUpdate }),
     });
     const normal = await mk();
-    expect(normal.notice).toMatch(/^⬆ squadrant 0.2.0 available/);
+    expect(normal.notice).toMatch(/^⬆ squadrant 0.2.0 available.*run `squadrant update`/);
     expect(normal.newState).toEqual({ lastChecked: 1000, latestKnown: "0.2.0", lastCheckFailed: false });
 
     const important = await mk({ level: "important", reason: "data loss fix" });
-    expect(important.notice).toMatch(/IMPORTANT.*0.2.0.*data loss fix/);
+    expect(important.notice).toMatch(/IMPORTANT.*0.2.0.*data loss fix.*run `squadrant update`/);
     expect(important.newState).toMatchObject({ level: "important", reason: "data loss fix" });
 
     const below = await mk({ level: "important", minSafe: "0.2.0", reason: "sec" });
-    expect(below.notice).toMatch(/below the minimum safe version 0.2.0.*sec/);
+    expect(below.notice).toMatch(/below the minimum safe version 0.2.0.*sec.*run `squadrant update`/);
   });
 
   it("minSafe warning comes from the cache with no network call", async () => {

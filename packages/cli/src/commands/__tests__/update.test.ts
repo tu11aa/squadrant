@@ -18,9 +18,9 @@ function deps(over: Partial<UpdateDeps> = {}): UpdateDeps & { lines: string[]; e
     manager: "npm",
     fetchRelease: async () => ({ version: "0.39.0", level: "important", reason: "fix", minSafe: "0.38.5" }),
     health: async () => [],
-    exec: (argv) => { ran.push(argv); return argv[1] === "--version" ? "0.39.0\n" : ""; },
-    out: (l) => lines.push(l),
-    err: (l) => errs.push(l),
+    exec: (argv: string[]) => { ran.push(argv); return argv[1] === "--version" ? "0.39.0\n" : ""; },
+    out: (l: string) => lines.push(l),
+    err: (l: string) => errs.push(l),
     ...over,
     lines, errs, ran,
   } as never;
@@ -84,6 +84,13 @@ describe("runUpdate", () => {
     expect(await runUpdate({}, d)).toBe(1);
     expect(d.errs.join()).toMatch(/expected 0.39.0/);
     expect((d.exec as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0][1] === "heal")).toBe(false);
+  });
+
+  it("says already up to date before refusing on live crews", async () => {
+    const d = deps({ current: "0.39.0", health: async () => [h("crew", "p", "c1", "alive")] });
+    expect(await runUpdate({}, d)).toBe(0);
+    expect(d.lines.join()).toMatch(/already up to date/);
+    expect(d.errs).toEqual([]);
   });
 
   it("is a no-op when already current", async () => {

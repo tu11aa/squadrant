@@ -99,19 +99,20 @@ export async function runUpdate(opts: UpdateOpts, d: UpdateDeps): Promise<number
     return rel ? 0 : 1;
   }
 
-  const health = await d.health();
-  const plan = planUpdate({ modulePath: d.modulePath, manager: d.manager, to: opts.to, liveCrews: liveCrewsFrom(health), force: !!opts.force });
-  if (!plan.ok) {
-    d.err(`update refused: ${plan.reason}`);
-    return 1;
-  }
-
+  // Resolve "nothing to install" first, so it never reads as a refusal.
   let expected = opts.to?.replace(/^v/, "");
   if (!expected) {
     const rel = await d.fetchRelease();
     if (!rel) { d.err("update: could not resolve the latest version from the npm registry"); return 1; }
     if (!isNewerVersion(rel.version, d.current)) { d.out(`already up to date (${d.current})`); return 0; }
     expected = rel.version;
+  }
+
+  const health = await d.health();
+  const plan = planUpdate({ modulePath: d.modulePath, manager: d.manager, to: opts.to, liveCrews: liveCrewsFrom(health), force: !!opts.force });
+  if (!plan.ok) {
+    d.err(`update refused: ${plan.reason}`);
+    return 1;
   }
 
   if (opts.dryRun) {

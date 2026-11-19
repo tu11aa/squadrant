@@ -129,10 +129,6 @@ export function installArgvFor(manager: InstallManager, spec: string): string[] 
   }
 }
 
-function upgradeCommandFor(manager: InstallManager): string {
-  return installArgvFor(manager, "latest").join(" ");
-}
-
 /** True when `current` is below the release's `minSafe` floor. */
 export function isBelowMinSafe(current: string, minSafe: string | undefined): boolean {
   return !!minSafe && isNewerVersion(minSafe, current);
@@ -154,10 +150,9 @@ export function parseReleaseInfo(doc: unknown): ReleaseInfo | null {
 export function formatUpdateNotice(
   latest: string,
   current: string,
-  modulePath: string = import.meta.url,
   meta?: Pick<UpdateCheckState, "level" | "reason" | "minSafe">,
 ): string {
-  const cmd = upgradeCommandFor(detectInstallManager(modulePath));
+  const cmd = "run `squadrant update`";
   const because = meta?.reason ? ` — ${meta.reason}` : "";
   if (isBelowMinSafe(current, meta?.minSafe)) {
     return `⚠ squadrant ${current} is below the minimum safe version ${meta!.minSafe}${because}. Update now: ${cmd}`;
@@ -173,7 +168,7 @@ export function noticeFromState(state: UpdateCheckState | undefined, current: st
   const latest = state?.latestKnown;
   if (!latest) return null;
   if (!isNewerVersion(latest, current) && !isBelowMinSafe(current, state.minSafe)) return null;
-  return formatUpdateNotice(latest, current, undefined, state);
+  return formatUpdateNotice(latest, current, state);
 }
 
 /**

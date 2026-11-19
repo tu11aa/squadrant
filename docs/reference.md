@@ -1036,9 +1036,9 @@ The check caches `level`, `reason` and `minSafe` with `latestKnown` in `~/.confi
 
 | Case | CLI notice (stderr, every command, from the cache) |
 |---|---|
-| `normal` | `⬆ squadrant X available (you have Y) — <install cmd>` |
-| `important` | `⚠ IMPORTANT: squadrant X available (you have Y) — <reason>. Update soon: <install cmd>` |
-| current < `minSafe` | `⚠ squadrant Y is below the minimum safe version M — <reason>. Update now: <install cmd>`. Also printed by `squadrant doctor` and `squadrant status`. |
+| `normal` | `⬆ squadrant X available (you have Y) — run \`squadrant update\`` |
+| `important` | `⚠ IMPORTANT: squadrant X available (you have Y) — <reason>. Update soon: run \`squadrant update\`` |
+| current < `minSafe` | `⚠ squadrant Y is below the minimum safe version M — <reason>. Update now: run \`squadrant update\``. Also printed by `squadrant doctor` and `squadrant status`. |
 
 `squadrant --version` prints the cached notice after the version line (#558). It reads the cache synchronously and never waits on the network. With no cache it stays instant and silent.
 
@@ -1046,7 +1046,9 @@ The check caches `level`, `reason` and `minSafe` with `latestKnown` in `~/.confi
 
 **Opt-outs** cover all of the above (CLI notice, `--version`, daemon push): `NO_UPDATE_NOTIFIER=1` or `defaults.updateCheck: false`.
 
-**`squadrant update`** never runs by itself.
+Every notice points at `squadrant update`. A dev or linked checkout gets the same text; running the command there explains it is not a registry install.
+
+**`squadrant update`** never runs by itself. When there is nothing newer it says "already up to date" before any other check.
 
 1. Refuses on a dev, linked or git checkout (the running copy is not under `node_modules/squadrant/`).
 2. Refuses while any crew is live, unless `--force`.
