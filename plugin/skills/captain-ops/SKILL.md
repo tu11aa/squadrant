@@ -1,43 +1,13 @@
 ---
 name: captain-ops
-description: Complete captain playbook — session startup, crew spawning, status writing, group awareness, and learnings. Use this skill at session start and reference it throughout.
+description: Complete captain playbook — crew spawning, review gate, status writing, shutdown, group awareness, and learnings. Read the section for an action before doing it; session startup lives in captain-startup.
 ---
 
 # Captain Operations
 
 ## Session Startup
 
-Execute the 4-step startup contract defined in your system prompt.
-
-**How to execute the contract:**
-
-1. **Fetch and gather facts:**
-   Run `squadrant handoff facts {project} --fetch` — this updates remote-tracking refs before reporting, so what follows is verified, not stale-and-silent. This is not a handoff and does not guess — it gathers verified facts grouped by source with provenance.
-
-2. **Check `liveRepo.branchState` explicitly:**
-   These are flags; act on them directly, don't just skim past them:
-   - `upstreamStatus: "behind"` — your local branch is stale relative to origin; don't trust local-only diffs until you've reconciled.
-   - `upstreamStatus: "diverged"` — both sides moved; this needs a decision (rebase/merge), not silence.
-   - `upstreamStatus: "upstream-gone"` — the remote branch was deleted; this local branch is likely done.
-   - `upstreamStatus: "no-upstream"` — never pushed.
-   - `dirtyWorkingTree: true` — uncommitted changes are sitting from a prior session; find out why before proceeding.
-   - `onUnexpectedBranch: true` — you're sitting on a `crew/*` worktree branch; a captain's own checkout normally shouldn't be.
-   - `mergedIntoBase: true` — this branch is fully merged into base already; safe to switch back to base / clean up.
-
-3. **Identify current state:**
-   Check tasks from the same call — `liveRepo.liveCrews` lists every non-terminal crew task for this project. A `state: "blocked"` entry with a `question` is waiting on you right now.
-
-4. **Read handoff:**
-   `~/.config/squadrant/scripts/read-handoff.sh "{project}"` (reads `~/squadrant/workspace/{project}/handoff.json`)
-   If a handoff exists, read the context carefully (`currentState`, `openBranches`, `nextSteps`, `blockedItems`, `decisions`). 
-   If it reported `"exists": false`, reconstruct from the `handoff facts` output instead of cold-starting blind (check `checkpoint`, `gapSessions`, `claudeMem`). You do the synthesizing.
-
-5. **Additional Context (opt-in):**
-   - Search **claude-mem** (`mem-search` skill) for your project name.
-   - Check `~/squadrant/workspace/{project}/artifacts/daily-logs/` for the most recent log.
-   - Check `{spokeVault}/learnings/` — selectively load relevant learnings.
-   - Check `{spokeVault}/skills/` and `{spokeVault}/wiki/`.
-   - Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
+Use the `squadrant:captain-startup` skill: it holds the 4-step startup contract and the trigger table that points back to the sections below. Don't re-run the steps from here.
 
 ## Message Senders
 
