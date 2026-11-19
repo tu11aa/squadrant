@@ -23,7 +23,7 @@ import {
 import {
   launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
   readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
-  discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments,
+  discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments, roleEnvPrefix,
   decideOpencodeGateWrap, buildOpencodeGateRunCommand,
   type CaptainAddress, type CaptainRouteSetup,
 } from "@squadrant/core";
@@ -389,7 +389,7 @@ export const launchCommand = new Command("launch")
             const gatePrefix = route && Object.keys(route.env).length > 0
               ? `${renderEnvAssignments(route.env)} `
               : "";
-            const cmd = `${gatePrefix}${effectiveCmd}`;
+            const cmd = `${roleEnvPrefix(roleConfig?.env)}${gatePrefix}${effectiveCmd}`;
             return captainOpencodeConfigPath
               ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${cmd}`
               : cmd;

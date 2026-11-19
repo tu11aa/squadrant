@@ -17,7 +17,7 @@ import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/work
 import {
   openThread, requestPark, parkThread, resumeThread, closeThread,
   listThreads, requireThread, parseDecisionRecord, formatDecisionMessage,
-  DEFAULT_MAX_THREADS, threadTitleFor, threadsDir,
+  DEFAULT_MAX_THREADS, threadTitleFor, threadsDir, roleEnvPrefix,
   type ThreadDeps, type ThreadLaunch, type ThreadRecord,
 } from "@squadrant/core";
 import { captainSession } from "../lib/captain-context.js";
@@ -116,7 +116,7 @@ async function threadDeps(project: string): Promise<ThreadDeps> {
     captainSessionId: sessionId,
     maxThreads: config.defaults.maxThreads ?? DEFAULT_MAX_THREADS,
     agentCommand: (launch, id, socketPath) =>
-      threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg, TEMPLATES_DIR, threadSessionName(project, id), socketPath),
+      roleEnvPrefix(config.defaults.roles?.captain?.env) + threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg, TEMPLATES_DIR, threadSessionName(project, id), socketPath),
     sendFirstTurn: (pane, text, pre) => sendFirstTurnWhenReady(runtime, pane, text, pre),
     ledger: () => compactLedgerContext(project),
     newSessionId: randomUUID,

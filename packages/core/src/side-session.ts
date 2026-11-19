@@ -19,6 +19,7 @@ import {
 } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
 import { boundedLaunchLine } from "./launch-line.js";
+import { roleEnvPrefix } from "./router/env.js";
 import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
@@ -209,7 +210,7 @@ export async function runSideSpawn(
 
   // #782: mark the tab so the permission gate (commands/gate.ts) can identify a
   // squadrant side session without a crew task id. Harmless for non-claude agents.
-  await runtime.sendToPane(pane, boundedLaunchLine(`cd ${shellQuote(spawnCwd)} && ${SIDE_SESSION_ENV}=1 ${agentCmd}`));
+  await runtime.sendToPane(pane, boundedLaunchLine(`cd ${shellQuote(spawnCwd)} && ${roleEnvPrefix(config.defaults.roles?.side?.env)}${SIDE_SESSION_ENV}=1 ${agentCmd}`));
   const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
 
   // No task record and no crew lifecycle here, so nothing confirms delivery; the

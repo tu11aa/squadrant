@@ -199,6 +199,25 @@ export interface RoleAssignment {
   backend?: BackendMode;
   /** Per-role thinking level → claude `--effort <level>`. Unset ⇒ flag omitted. */
   thinking?: ThinkingLevel;
+  /** #1143: extra env vars for this role's agent process at launch. Absent ⇒ none. SQUADRANT_* keys are ignored. */
+  env?: Record<string, string>;
+}
+
+const ROLE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Why a `roles.<role>.env` entry is unusable, or null when it is fine. SQUADRANT_* is squadrant-owned. */
+export function roleEnvProblem(name: string, value: unknown): string | null {
+  if (!ROLE_ENV_NAME.test(name)) return `'${name}' is not a valid env var name`;
+  if (typeof value !== "string") return `'${name}' must be a string value`;
+  if (name.startsWith("SQUADRANT_")) return `'${name}' is squadrant-owned and ignored`;
+  return null;
+}
+
+/** The usable entries of a role's `env`, safe to render into a launch line. */
+export function resolveRoleEnv(env: Record<string, unknown> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env ?? {})) if (roleEnvProblem(k, v) === null) out[k] = v as string;
+  return out;
 }
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;

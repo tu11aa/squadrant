@@ -5,6 +5,7 @@ import {
   formatCustomHeaders,
   mergeClaudeEnvRouterSettings,
   renderEnvAssignments,
+  roleEnvPrefix,
 } from "../env.js";
 
 describe("buildRouterEnv", () => {
@@ -163,5 +164,16 @@ describe("renderEnvAssignments", () => {
 
   it("escapes quotes and backslashes", () => {
     expect(renderEnvAssignments({ K: "it's\\ok" })).toBe("K=$'it\\'s\\\\ok'");
+  });
+});
+
+describe("roleEnvPrefix (#1143)", () => {
+  it("is empty when there is no env", () => {
+    expect(roleEnvPrefix(undefined)).toBe("");
+    expect(roleEnvPrefix({})).toBe("");
+  });
+
+  it("renders valid entries with a trailing space and drops SQUADRANT_* and bad names", () => {
+    expect(roleEnvPrefix({ B: "2", A: "1", SQUADRANT_ROLE: "x", "bad name; rm": "y" })).toBe("A=$'1' B=$'2' ");
   });
 });

@@ -80,6 +80,7 @@ vi.mock("@squadrant/core", () => ({
     backend: "native" as const, model: o.model, permissionMode: o.configuredPermissionMode, env: {},
   })),
   renderEnvAssignments: vi.fn(() => ""),
+  roleEnvPrefix: vi.fn(() => ""),
   decideOpencodeGateWrap: decideOpencodeGateWrapMock,
   buildOpencodeGateRunCommand: buildOpencodeGateRunCommandMock,
 }));

@@ -153,6 +153,27 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 
 > **Not the same thing as [`defaults.effort`](#effort-dial-tokenomics).** `defaults.effort` (`max|balance|low`, set via `squadrant effort`) is the *crew tokenomics dial* — a global, captain-discretion signal about how aggressively to spend tokens. `defaults.roles.<role>.thinking` is a per-role reasoning-depth setting emitted as a CLI flag. They share the word `max` and nothing else; changing one does not affect the other.
 
+### Per-role env (`roles.<role>.env`, #1143)
+
+Each role can carry extra environment variables, set on that role's agent process at launch. It is agent-agnostic (claude, codex, opencode, gemini all go through the same launch-line prefix); squadrant sets no default.
+
+```json
+{
+  "defaults": {
+    "roles": {
+      "captain": { "agent": "claude", "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0" } },
+      "crew":    { "agent": "claude", "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1" } }
+    }
+  }
+}
+```
+
+- Applies to `captain` (also its discussion threads, which use the captain role), `crew`, `side` and `command`. Absent ⇒ the launch line is identical to today.
+- **`SQUADRANT_*` keys are ignored** — squadrant-owned variables always win. For a routed crew/captain the router env (`ANTHROPIC_*`) is also applied after role env.
+- `squadrant config check` reports invalid names, non-string values, `SQUADRANT_*` keys and a non-object `env`.
+- Role env is not written to `~/.claude/settings.json`; that file's `env` block is still owned by [`defaults.claudeEnv`](#config) (#615). Takes effect on the next launch/spawn.
+- **Precedence vs `~/.claude/settings.json` `env` (verified, claude 2.1.328):** a launch-time env var wins over settings.json, and `"0"` turns code mode off. With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` in settings.json, a headless `claude -p` printed the "Code Mode (experimental) isn't available" warning (flag on); launched with `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0` the warning disappeared (flag off). So per-role env works with the key still in settings.json; to make crews-on / captains-off explicit, remove the key from settings.json and set it per role.
+
 ### Provider Presets (`squadrant init`)
 
 A fresh install must not assume the operator has an Anthropic credential. `squadrant init` asks **one** provider question — or takes `--preset <a|b|c>` non-interactively — and writes the matching `defaults` blocks ([#826](https://github.com/tu11aa/squadrant/issues/826)). Preset A (all-claude + `auto`) remains the default and preserves back-compat.
