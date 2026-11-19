@@ -4,6 +4,8 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
+import { cachedMinSafeWarning } from "@squadrant/shared";
+import { installedVersion } from "./update.js";
 import { loadConfig, kbConfigs, workspacePath, stateRoot, legacyStateDir, stateSeedMarkerPath, daemonLogPath, resolveHome, USER_KB, type SquadrantConfig } from "@squadrant/shared";
 import { styleReport, formatStyleRow, kbDir, legacyIndexHint, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
@@ -319,6 +321,12 @@ export const doctorCommand = new Command("doctor")
   .option("-v, --verbose", "list every dangling path reference, not just the first 5 per site")
   .action(async (opts: { verbose?: boolean }) => {
     console.log(chalk.bold("\nSquadrant Doctor\n"));
+
+    // #1150: below the release's minSafe floor (cached; no network).
+    try {
+      const w = cachedMinSafeWarning({ config: loadConfig(), currentVersion: installedVersion() });
+      if (w) console.log(chalk.yellow(`${w}\n`));
+    } catch { /* best-effort */ }
 
     const results: boolean[] = [];
 

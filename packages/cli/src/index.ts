@@ -10,6 +10,7 @@ import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync, isolatedC
 import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand, isReadOnlyTopLevelCommand } from "@squadrant/core";
 import { syncShippedOpencodeSkills } from "@squadrant/agents";
 import { doctorCommand } from "./commands/doctor.js";
+import { updateCommand } from "./commands/update.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
 import { statusCommand } from "./commands/status.js";
@@ -55,7 +56,7 @@ import { devCommand } from "./commands/dev.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
-import { notifyIfUpdateAvailable } from "@squadrant/shared";
+import { notifyIfUpdateAvailable, cachedUpdateNotice } from "@squadrant/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -92,6 +93,8 @@ if (!process.env.VITEST && !isolated) {
   }
 }
 
+let versionNotice: string | null = null;
+
 // Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
 // Detect + print only — never mutates config and never throws.
@@ -117,7 +120,13 @@ if (process.argv[2] !== "config" && !isolated) {
       // logic; the unref'd node:https transport and bounded race inside notifyIfUpdateAvailable
       // (see update-check.ts) mean a pending check can't delay process exit either, and a
       // failed attempt is cached so an offline machine doesn't re-hit the registry every run.
-      void notifyIfUpdateAvailable({ config: cfg, currentVersion: pkg.version });
+      // #558: commander's --version exits synchronously, before the async check can print,
+      // so that path reads the cache synchronously and prints it after the version line.
+      if (process.argv[2] === "--version" || process.argv[2] === "-V") {
+        versionNotice = cachedUpdateNotice({ config: cfg, currentVersion: pkg.version });
+      } else {
+        void notifyIfUpdateAvailable({ config: cfg, currentVersion: pkg.version });
+      }
     }
   } catch {
     // Drift banner is best-effort; never block the CLI.
@@ -155,9 +164,16 @@ const program = new Command();
 program
   .name("squadrant")
   .description("Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)")
-  .version(pkg.version);
+  .version(pkg.version)
+  .configureOutput({
+    writeOut: (s) => {
+      process.stdout.write(s);
+      if (versionNotice) process.stderr.write(`\n${versionNotice}\n`);
+    },
+  });
 
 program.addCommand(doctorCommand);
+program.addCommand(updateCommand);
 program.addCommand(initCommand);
 program.addCommand(projectsCommand);
 program.addCommand(statusCommand);

@@ -35,6 +35,7 @@ import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { resolveHookTask } from "./lib/cmux-hook-attribution.js";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
+import { runDaemonUpdateCheck, UPDATE_TICK_MS } from "./lib/daemon-update-notice.js";
 import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -652,6 +653,20 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         appendCaptainMessage: (project: string, text: string) =>
           appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
       });
+      // #1150: daily update check; pushes ONE notice per important/below-minSafe version.
+      const updateTick = () => void runDaemonUpdateCheck({
+        version: PKG_VERSION,
+        stateRoot,
+        config: loadConfig(),
+        driver: registry.global(loadConfig()),
+        appendCaptainMessage: (project: string, text: string) =>
+          appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+      });
+      updateTick();
+      const updateTimer = setInterval(updateTick, UPDATE_TICK_MS);
+      updateTimer.unref();
+      const stopWithTimer = h.stop.bind(h);
+      h.stop = async (reason?: string) => { clearInterval(updateTimer); return stopWithTimer(reason); };
     } catch (e) {
       log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);
     }
