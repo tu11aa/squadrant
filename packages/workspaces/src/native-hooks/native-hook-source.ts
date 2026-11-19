@@ -26,6 +26,8 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   ["SessionStart",     "session-start"],
   // #982: the operator profile block — its own command, so its own additionalContext string; never a lifecycle event.
   ["SessionStart",     "profile-session-start"],
+  // #1109: the captain-ops core after a compact — its own command, so its own additionalContext string (Claude caps one at ~10k).
+  ["SessionStart",     "captain-core"],
   ["UserPromptSubmit", "prompt-submit"],
   ["PreToolUse",       "pre-tool-use"],
   ["Stop",             "stop"],

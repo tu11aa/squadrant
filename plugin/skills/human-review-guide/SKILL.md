@@ -126,7 +126,7 @@ Put these once at the top of the guide:
 - **Line numbers drift** when crews push fixes. Always give the symbol and the SHA; re-verify before handing over.
 - **Do not over-compress** into bare checks; **do not pad** with what machines verified.
 - Do not answer a crew's confirmation prompt "no" to sequence work; send instructions as a message instead.
-- A guide is not a verdict. The owner's own review still happens first; the human gate sits on top. Never merge on the guide's say-so; the review-gate contract in `captain-ops` still applies.
+- A guide is not a verdict. The owner's own review still happens first; the human gate sits on top. Never merge on the guide's say-so; the review-gate contract in `captain-ops` (`review-gate.md`) still applies.
 - Examples in the guide must come from the real PRs; never invent anchors. (The template's sample data is invented and must be replaced.)
 
 ## Common rationalizations

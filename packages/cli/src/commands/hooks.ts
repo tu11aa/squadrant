@@ -17,7 +17,7 @@ import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } fro
 import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
-import { compactHandoffContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
+import { compactHandoffContext, compactCoreContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
 import { renderLiveLedger } from "../lib/compact-ledger.js";
 import { gatherLiveCrews, defaultCommandRunner } from "../lib/handoff-live-repo.js";
 import { runGatePermissionRequest } from "./gate.js";
@@ -198,6 +198,14 @@ export async function rulesHookOutput(
 /** The sub-command every agent's profile hook calls (#982): its own command, so its own additionalContext string. */
 export const PROFILE_HOOK_SUB = "profile-session-start";
 
+/** #1109: the captain-ops core after a compact has its own hook command too, so Claude's ~10k-per-string cap never cuts it. */
+export const CAPTAIN_CORE_HOOK_SUB = "captain-core";
+
+/** The captain-core hook output: only the core, only on a captain's SessionStart(source=compact); "" otherwise. Never throws. */
+export function captainCoreHookOutput(payload: unknown, env: NodeJS.ProcessEnv, project: string | null | undefined, skillFile?: string): string {
+  return appendAdditionalContext("", compactCoreContext(payload, env, project, skillFile));
+}
+
 /** hookEventName the agent expects back for its session-start point (opencode's plugin ignores it). */
 const SESSION_EVENT_NAME: Record<string, string> = { claude: "SessionStart", codex: "SessionStart", gemini: "SessionStart", opencode: "session" };
 
@@ -277,6 +285,14 @@ export function hooksCommand(): Command {
       // #982: the profile hook is its own command and emits nothing else (no rules, no lifecycle event).
       if (sub === PROFILE_HOOK_SUB) {
         const out = await profileHookOutput(payload, { env: process.env, cwd: process.cwd(), agent: "claude" });
+        if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
+        process.exit(0);
+      }
+
+      // #1109: the captain-ops core is its own command and emits nothing else.
+      if (sub === CAPTAIN_CORE_HOOK_SUB) {
+        let out = "";
+        try { out = captainCoreHookOutput(payload, process.env, opts.project ?? resolveCurrentProject(loadConfig())); } catch { /* fail-open */ }
         if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
         process.exit(0);
       }

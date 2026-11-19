@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-hooks-")); // never write the real audit log
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
-import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, attributionGuard, PROFILE_HOOK_SUB } from "../hooks.js";
+import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, attributionGuard, PROFILE_HOOK_SUB, CAPTAIN_CORE_HOOK_SUB, captainCoreHookOutput } from "../hooks.js";
 import { serializeTrait } from "@squadrant/core";
 
 // #560: the "ask-question" sub fires from NativeHookSource's global
@@ -309,5 +309,30 @@ describe("attributionGuard wiring (#1007)", () => {
   it("ignores non-Bash payloads", () => {
     expect(attributionGuard({ tool_name: "Write", tool_input: {} }, homeWith('{"attribution":{"commit":""}}')).decision).toBe("allow");
     expect(attributionGuard(undefined, "/nonexistent").decision).toBe("allow");
+  });
+});
+
+// #1109: the captain-ops core is its own hook command, so its own additionalContext string under Claude's ~10k cap.
+describe("captainCoreHookOutput (#1109)", () => {
+  const core = path.resolve(__dirname, "../../../../../plugin/skills/captain-ops/SKILL.md");
+  const cap = { SQUADRANT_ROLE: "captain" } as NodeJS.ProcessEnv;
+
+  it("is the captain-core sub", () => expect(CAPTAIN_CORE_HOOK_SUB).toBe("captain-core"));
+
+  it("emits only the core, as one JSON document, on a captain compact start", () => {
+    const o = JSON.parse(captainCoreHookOutput({ source: "compact" }, cap, "demo", core));
+    expect(o.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    expect(o.hookSpecificOutput.additionalContext).toContain("Trigger table");
+  });
+
+  it("stays well under the 10k-per-string cap", () => {
+    const o = JSON.parse(captainCoreHookOutput({ source: "compact" }, cap, "demo", core));
+    expect(o.hookSpecificOutput.additionalContext.length).toBeLessThan(6000);
+  });
+
+  it("emits nothing for a crew compact, a startup, or a plain session", () => {
+    expect(captainCoreHookOutput({ source: "compact" }, { ...cap, SQUADRANT_CREW_TASK_ID: "t" }, "demo", core)).toBe("");
+    expect(captainCoreHookOutput({ source: "startup" }, cap, "demo", core)).toBe("");
+    expect(captainCoreHookOutput({ source: "compact" }, {}, "demo", core)).toBe("");
   });
 });

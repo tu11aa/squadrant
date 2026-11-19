@@ -11,7 +11,7 @@ Run once; the operator walks away. A captain cannot relaunch itself (`launch --f
 
 ## Steps (in order)
 
-1. **Write a specific handoff** with `~/.config/squadrant/scripts/write-handoff.sh "{project}" '{…}'`. Same rules as rollover (`captain-ops` → Session Shutdown): read the current handoff first, drop verified-done items, merge duplicates, keep all open items and every decision including `[thread …]` lines. Be concrete: `currentState` says what is in flight and where; `nextSteps` is the first actions to take, with PR/issue/crew ids; `decisions` lists what must not be revisited. Do not run `read-handoff.sh`: it would archive the file before the fresh session reads it.
+1. **Write a specific handoff** with `~/.config/squadrant/scripts/write-handoff.sh "{project}" '{…}'`. Same rules as rollover (`captain-ops` → `shutdown.md`): read the current handoff first, drop verified-done items, merge duplicates, keep all open items and every decision including `[thread …]` lines. Be concrete: `currentState` says what is in flight and where; `nextSteps` is the first actions to take, with PR/issue/crew ids; `decisions` lists what must not be revisited. Do not run `read-handoff.sh`: it would archive the file before the fresh session reads it.
 2. **Write today's daily log** with the `squadrant:daily-log` skill.
 3. **Queue the restart as your LAST action:**
    ```bash

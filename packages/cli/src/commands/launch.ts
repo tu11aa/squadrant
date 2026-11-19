@@ -248,7 +248,7 @@ export const launchCommand = new Command("launch")
 
       let initialPrompt: string | undefined;
       if (role === "captain") {
-        initialPrompt = "Run your startup checklist: use the squadrant:captain-ops skill, complete all startup steps, then report ready.";
+        initialPrompt = "Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready.";
       } else if (role === "command") {
         initialPrompt = "Run your startup checklist: use the squadrant:command-ops skill, complete your daily briefing, then report ready.";
       }
