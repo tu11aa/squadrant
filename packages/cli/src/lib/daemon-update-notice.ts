@@ -67,9 +67,11 @@ export async function runDaemonUpdateCheck(opts: DaemonUpdateCheckOpts): Promise
     const state = outcome.newState ?? readUpdateCheckState(opts.statePath);
     if (!outcome.notice || !shouldPushUpdate(state, opts.version)) return;
     if (readNotifiedVersion(opts.stateRoot) === state!.latestKnown) return;
-    // Persist first: a crash mid-broadcast must not re-send on the next boot.
-    writeConfigFileSync(notifiedPath(opts.stateRoot), JSON.stringify({ version: state!.latestKnown }, null, 2) + "\n");
-    await notifyCaptainsOfDaemonRestart(opts.version, opts.config, opts.driver, false, opts.appendCaptainMessage, outcome.notice);
+    // Persist only once a captain was reached: the daemon can boot before any captain is up
+    // (reboot), and that tick must not use up the notice. A crash between send and persist
+    // may re-send once on the next tick; that is acceptable.
+    const reached = await notifyCaptainsOfDaemonRestart(opts.version, opts.config, opts.driver, false, opts.appendCaptainMessage, outcome.notice);
+    if (reached > 0) writeConfigFileSync(notifiedPath(opts.stateRoot), JSON.stringify({ version: state!.latestKnown }, null, 2) + "\n");
   } catch {
     // best-effort
   }

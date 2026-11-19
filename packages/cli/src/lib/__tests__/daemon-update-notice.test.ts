@@ -44,6 +44,21 @@ describe("runDaemonUpdateCheck", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("does not use up the notice when no captain is live; delivers once when one is", async () => {
+    const { sent, base } = setup({ version: "0.39.0", squadrantUpdate: { level: "important" } });
+    let live = false;
+    const driver = { status: async (n: string) => (live ? { id: n } : null) };
+    await runDaemonUpdateCheck({ ...base, driver, now: () => 1 });
+    expect(sent).toEqual([]);
+    expect(readNotifiedVersion(base.stateRoot)).toBeNull();
+    live = true;
+    await runDaemonUpdateCheck({ ...base, driver, now: () => 2 });
+    expect(sent).toHaveLength(1);
+    expect(readNotifiedVersion(base.stateRoot)).toBe("0.39.0");
+    await runDaemonUpdateCheck({ ...base, driver, now: () => 3 });
+    expect(sent).toHaveLength(1);
+  });
+
   it("notifies again for a newer important version", async () => {
     const { sent, base } = setup({ version: "0.39.0", squadrantUpdate: { level: "important" } });
     await runDaemonUpdateCheck({ ...base, now: () => 1 });

@@ -72,7 +72,7 @@ function restartNotice(version: string, pathChanged: boolean): string {
  * the daemon boots independently of any captain — so this reaches ALL of them.
  * The appendCaptainMessage callback is a closure that captures stateRoot from
  * the caller (squadrantd.ts), so it takes (projectName, text). `text` overrides the
- * default restart notice (reused by the update push, #1150).
+ * default restart notice (reused by the update push, #1150). Returns how many captains it reached.
  */
 export async function notifyCaptainsOfDaemonRestart(
   version: string,
@@ -81,19 +81,22 @@ export async function notifyCaptainsOfDaemonRestart(
   pathChanged = false,
   appendCaptainMessage: AppendCaptainMessageFn,
   text?: string,
-): Promise<void> {
+): Promise<number> {
   const notice = text ?? restartNotice(version, pathChanged);
+  let reached = 0;
   for (const [projName] of Object.entries(config.projects)) {
     try {
       const proj = config.projects[projName];
       const ref = await driver.status(proj.captainName);
       if (ref) {
         await appendCaptainMessage(projName, notice);
+        reached++;
       }
     } catch {
       // individual project captain unreachable — skip
     }
   }
+  return reached;
 }
 
 export interface MaybeBroadcastDaemonRestartOpts {
