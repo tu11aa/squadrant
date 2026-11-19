@@ -92,6 +92,39 @@ describe("runConfigGet / runConfigSet (dotted path)", () => {
 
 // ── daemon auto-restart on config set ────────────────────────────────────────
 
+describe("runConfigSet — string fields and validation (#1149)", () => {
+  it("keeps a numeric-looking value as a string on an env map and passes config check", () => {
+    writeUser(() => {});
+    runConfigSet("defaults.roles.captain.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE", "0", cfgPath);
+    runConfigSet("defaults.claudeEnv.CLAUDE_AFK_TIMEOUT_MS", "240000", cfgPath);
+    const c = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    expect(c.defaults.roles.captain.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE).toBe("0");
+    expect(c.defaults.claudeEnv.CLAUDE_AFK_TIMEOUT_MS).toBe("240000");
+    const res = runConfigCheck({ configPath: cfgPath, pkgVersion: "0.5.3", fix: false, accept: false });
+    expect(res.items.filter((i) => i.kind === "invalid")).toEqual([]);
+  });
+
+  it("still accepts the quoted '\"0\"' workaround", () => {
+    writeUser(() => {});
+    runConfigSet("defaults.roles.captain.env.X", '"0"', cfgPath);
+    expect(runConfigGet("defaults.roles.captain.env.X", cfgPath)).toBe("0");
+  });
+
+  it("refuses an invalid value and leaves the file unchanged", () => {
+    writeUser(() => {});
+    const before = fs.readFileSync(cfgPath, "utf-8");
+    expect(() => runConfigSet("defaults.roles.captain.env.SQUADRANT_X", "1", cfgPath)).toThrow(/squadrant-owned/);
+    expect(() => runConfigSet("defaults.roles.captain.env", "5", cfgPath)).toThrow(/env must be an object/);
+    expect(fs.readFileSync(cfgPath, "utf-8")).toBe(before);
+  });
+
+  it("number fields still parse as numbers", () => {
+    writeUser(() => {});
+    runConfigSet("defaults.maxCrew", "9", cfgPath);
+    expect(runConfigGet("defaults.maxCrew", cfgPath)).toBe(9);
+  });
+});
+
 describe("runConfigSetAction — daemon restart gating", () => {
   it("does NOT call restart for a non-daemon-cached key (defaults.effort)", async () => {
     writeUser(() => {});

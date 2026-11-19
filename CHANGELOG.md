@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-11-19
+
+Updating. squadrant can now say how important a release is, and update itself: `squadrant update` installs the new version, restarts the daemon on it and lists the captains to relaunch. PRs #1151, #1152.
+
+**Upgrade:** this one is still manual: `npm i -g squadrant@latest` (or your package manager), then `squadrant heal daemon`, then relaunch captains. From the next release on, run `squadrant update`.
+
+### Added
+
+- **`squadrant update`.** Detects the package manager (npm, pnpm, yarn), installs `squadrant@latest` (or `--to <version>`), checks the installed version, restarts the daemon on the new code (`heal daemon`) and lists the live captains to relaunch with `/squadrant:restart`. Refuses while crews are live (`--force` overrides) and on a dev, linked or git checkout. `--check` reports current, latest, level, reason and minSafe; `--dry-run` prints the commands. Never runs automatically (#1150, #1152).
+- **Update importance.** A release may set `squadrantUpdate: { level, reason, minSafe }` in its published `package.json` (how: CONTRIBUTING.md). A normal release keeps the one-line notice; an important release prints a louder line with the reason; an install below `minSafe` is warned on every command and in `squadrant doctor` and `squadrant status`. Every notice now says "run `squadrant update`". The daemon checks too and tells live captains once per important (or below-minSafe) version; a version counts as notified only after a captain received it (#1150, #1152).
+
+### Fixed
+
+- **`squadrant --version` shows the update notice.** It read nothing before exiting; it now prints the cached notice after the version line (#558, #1152).
+- **`squadrant config set` keeps text as text.** On env maps (`defaults.roles.<role>.env.*`, `defaults.claudeEnv.*`) and other string fields the value is stored as typed, so `… env.X 0` writes `"0"`. The result is checked with the `config check` rules before writing; an invalid value is refused and the file is left unchanged (#1149, #1151).
+
 ## [0.38.0] - 2026-11-19
 
 Captain context. Captains load a short startup skill instead of the whole 43 KB playbook, the playbook is split into a core plus on-demand reference files that survive `/compact`, roles can carry their own environment variables (for example Claude Code code mode for crews only), and a captain can restart itself into a fresh session. PRs #1139, #1140, #1144, #1146.
