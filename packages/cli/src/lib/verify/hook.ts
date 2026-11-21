@@ -4,7 +4,7 @@ import path from "node:path";
 import { git } from "./evidence.js";
 
 export type HookMode = "run" | "check";
-const MARKER = "# squadrant-gate-hook";
+const MARKER = "# squadrant-verify-hook";
 
 export function installHook(repo: string, mode: HookMode): { hookPath: string; chained: string | null } {
   const hookPath = path.resolve(repo, git(repo, ["rev-parse", "--git-path", "hooks/pre-push"]));
@@ -20,15 +20,19 @@ export function installHook(repo: string, mode: HookMode): { hookPath: string; c
   }
   if (fs.existsSync(chainedPath)) chained = chainedPath;
 
-  const gateCmd = mode === "run" ? "squadrant gate --repo \"$(git rev-parse --show-toplevel)\"" : "squadrant gate --check --repo \"$(git rev-parse --show-toplevel)\"";
+  const cmd = mode === "run" ? "squadrant verify" : "squadrant verify --check";
+  // git feeds the refs being pushed on stdin; verify steps must not eat it, so
+  // save it and replay it to the chained hook.
   const script = [
     "#!/bin/sh",
     `${MARKER} (mode: ${mode})`,
-    `${gateCmd} || { echo "squadrant gate: push blocked" >&2; exit 1; }`,
-    chained ? `[ -x "${chained}" ] && exec "${chained}" "$@"` : "",
+    'in=$(mktemp) && cat > "$in"',
+    'trap \'rm -f "$in"\' EXIT',
+    `${cmd} --repo "$(git rev-parse --show-toplevel)" </dev/null || { echo "squadrant verify: push blocked" >&2; exit 1; }`,
+    ...(chained ? [`if [ -x "${chained}" ]; then "${chained}" "$@" < "$in"; exit $?; fi`] : []),
     "exit 0",
     "",
-  ].filter((l, i, a) => l !== "" || i === a.length - 1).join("\n");
+  ].join("\n");
   fs.writeFileSync(hookPath, script, { mode: 0o755 });
   fs.chmodSync(hookPath, 0o755);
   return { hookPath, chained };

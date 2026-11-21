@@ -13,8 +13,6 @@
 //
 // Design: docs/specs/2026-09-20-router-permission-gate-u7-design.md
 
-import fs from "node:fs";
-import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import { sendRequest } from "@squadrant/core";
@@ -47,9 +45,6 @@ import {
 import type { ControlEvent } from "@squadrant/shared";
 import { deriveTranscriptPath, mapClaudeHookToEvent } from "@squadrant/agents";
 import { runGateOpencodeRun } from "./gate-opencode-run.js";
-import { runGate, checkEvidence } from "../lib/gate/run.js";
-import { installHook, type HookMode } from "../lib/gate/hook.js";
-import { git } from "../lib/gate/evidence.js";
 
 const SOCK = DAEMON_SOCK_PATH;
 
@@ -280,7 +275,7 @@ export function runGateStatus(
 
 export function gateCommand(): Command {
   const gate = new Command("gate").description(
-    "Local gate (#1136): run .squadrant/gate.json steps and write SHA-keyed evidence; also the permission gate (#782/#854): get/set defaults.gate.mode",
+    "Permission gate (#782/#854): get/set defaults.gate.mode; 'claude <event>' is an internal hook handler",
   );
 
   gate
@@ -303,51 +298,6 @@ export function gateCommand(): Command {
       console.log(chalk.dim("No daemon bounce needed — defaults.gate.mode is read live."));
       if (isGateMode(process.env.SQUADRANT_GATE ?? "") && process.env.SQUADRANT_GATE !== result.next) {
         console.log(chalk.yellow(`Note: SQUADRANT_GATE=${process.env.SQUADRANT_GATE} in this session still overrides the config value.`));
-      }
-    });
-
-  // #1136: local CI-equivalent gate. `squadrant gate` (no subcommand) runs it.
-  gate
-    .option("--repo <path>", "repo to gate (default: cwd)")
-    .option("--base <branch>", "base branch for diff-based meta-checks (default: gate.json base or develop)")
-    .option("--test-change <reason>", "justify changed assertions in high-tier specs (same as a test-change: commit note)")
-    .option("--check", "only verify green evidence exists for HEAD (fast; used by the pre-push check hook)")
-    .action((opts: { repo?: string; base?: string; testChange?: string; check?: boolean }) => {
-      const repo = git(path.resolve(opts.repo ?? process.cwd()), ["rev-parse", "--show-toplevel"]);
-      try {
-        if (opts.check) {
-          const r = checkEvidence(repo);
-          console.log(r.ok ? chalk.green(r.message) : chalk.red(r.message));
-          process.exit(r.ok ? 0 : 1);
-        }
-        const { evidence, file } = runGate({ repo, base: opts.base, testChange: opts.testChange });
-        console.log(fs.readFileSync(file.replace(/\.json$/, ".md"), "utf8"));
-        console.log(chalk.dim(`evidence: ${file}`));
-        process.exit(evidence.green ? 0 : 1);
-      } catch (err) {
-        console.error(chalk.red(`gate: ${(err as Error).message}`));
-        process.exit(1);
-      }
-    });
-
-  gate
-    .command("install-hook")
-    .description("Install a pre-push hook: run = run the gate, check = require green evidence for HEAD")
-    .requiredOption("--mode <mode>", "run | check")
-    .option("--repo <path>", "repo (default: cwd)")
-    .action((opts: { mode: string; repo?: string }) => {
-      if (opts.mode !== "run" && opts.mode !== "check") {
-        console.error(chalk.red("--mode must be run or check"));
-        process.exit(1);
-      }
-      try {
-        const repo = git(path.resolve(opts.repo ?? process.cwd()), ["rev-parse", "--show-toplevel"]);
-        const r = installHook(repo, opts.mode as HookMode);
-        console.log(chalk.green(`Installed pre-push (${opts.mode}): ${r.hookPath}`));
-        if (r.chained) console.log(chalk.dim(`Chained existing hook: ${r.chained}`));
-      } catch (err) {
-        console.error(chalk.red(`gate install-hook: ${(err as Error).message}`));
-        process.exit(1);
       }
     });
 

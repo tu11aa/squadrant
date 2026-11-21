@@ -49,7 +49,7 @@ export function ensureEvidenceIgnored(repo: string): void {
 }
 
 export function renderSummary(e: Evidence): string {
-  const lines = [`# Gate ${e.green ? "GREEN" : "RED"} — ${e.sha.slice(0, 12)}${e.dirty ? " (dirty tree)" : ""}`, ""];
+  const lines = [`# Verify ${e.green ? "GREEN" : "RED"} — ${e.sha.slice(0, 12)}${e.dirty ? " (dirty tree)" : ""}`, ""];
   if (e.riskLabel) lines.push(`Risk: **${e.riskLabel}**`, "");
   lines.push("| step | exit | time | ran/skipped/failed |", "|---|---|---|---|");
   for (const s of e.steps) {

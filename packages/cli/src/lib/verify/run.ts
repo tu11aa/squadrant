@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { loadGateConfig } from "./config.js";
+import { loadVerifyConfig } from "./config.js";
 import { loadRiskMap, touchedHigh } from "./risk-map.js";
 import { checkAllSkipped, checkAssertionChanges, parseJsonReport } from "./meta.js";
 import { ensureEvidenceIgnored, git, readEvidence, writeEvidence, type Evidence, type MetaFailure, type StepResult } from "./evidence.js";
@@ -23,10 +23,10 @@ function mergeBase(repo: string, base: string): string | null {
   return null;
 }
 
-export function runGate(opts: RunOptions): { evidence: Evidence; file: string } {
+export function runVerify(opts: RunOptions): { evidence: Evidence; file: string } {
   const { repo } = opts;
   const log = opts.log ?? ((s: string) => console.log(s));
-  const config = loadGateConfig(repo);
+  const config = loadVerifyConfig(repo);
   const map = loadRiskMap(repo);
   const sha = git(repo, ["rev-parse", "HEAD"]);
   const dirty = git(repo, ["status", "--porcelain"]).length > 0;
@@ -34,13 +34,13 @@ export function runGate(opts: RunOptions): { evidence: Evidence; file: string } 
 
   const steps: StepResult[] = [];
   const metaFailures: MetaFailure[] = [];
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-gate-"));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-verify-"));
   try {
     config.steps.forEach((step, i) => {
       log(`▶ ${step.name}: ${step.command}`);
       const reportFile = path.join(tmp, `report-${i}.json`);
       const t0 = Date.now();
-      const r = spawnSync(step.command, { cwd: repo, shell: true, stdio: "inherit", env: { ...process.env, SQUADRANT_GATE_JSON: reportFile } });
+      const r = spawnSync(step.command, { cwd: repo, shell: true, stdio: "inherit", env: { ...process.env, SQUADRANT_VERIFY_JSON: reportFile } });
       const parsed = step.parse === "json" && fs.existsSync(reportFile) ? parseJsonReport(fs.readFileSync(reportFile, "utf8")) : null;
       const required = step.required !== false;
       steps.push({ name: step.name, command: step.command, kind: step.kind, required, exitCode: r.status ?? 1, durationMs: Date.now() - t0, counts: parsed?.counts ?? null });
@@ -68,8 +68,8 @@ export function runGate(opts: RunOptions): { evidence: Evidence; file: string } 
 export function checkEvidence(repo: string): { ok: boolean; message: string } {
   const sha = git(repo, ["rev-parse", "HEAD"]);
   const e = readEvidence(repo, sha);
-  if (!e) return { ok: false, message: `no gate evidence for HEAD ${sha.slice(0, 12)} — run \`squadrant gate\`` };
-  if (!e.green) return { ok: false, message: `gate evidence for HEAD ${sha.slice(0, 12)} is RED — fix and re-run \`squadrant gate\`` };
-  if (e.dirty) return { ok: false, message: `gate evidence for HEAD ${sha.slice(0, 12)} was produced on a dirty tree — commit, then re-run \`squadrant gate\`` };
-  return { ok: true, message: `gate evidence green for ${sha.slice(0, 12)}` };
+  if (!e) return { ok: false, message: `no verify evidence for HEAD ${sha.slice(0, 12)} — run \`squadrant verify\`` };
+  if (!e.green) return { ok: false, message: `verify evidence for HEAD ${sha.slice(0, 12)} is RED — fix and re-run \`squadrant verify\`` };
+  if (e.dirty) return { ok: false, message: `verify evidence for HEAD ${sha.slice(0, 12)} was produced on a dirty tree — commit, then re-run \`squadrant verify\`` };
+  return { ok: true, message: `verify evidence green for ${sha.slice(0, 12)}` };
 }

@@ -3,11 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { globToRegExp, touchedHigh, type RiskMap } from "../gate/risk-map.js";
-import { parseJsonReport, checkAllSkipped, checkAssertionChanges } from "../gate/meta.js";
-import { runGate, checkEvidence } from "../gate/run.js";
-import { installHook } from "../gate/hook.js";
-import { readEvidence } from "../gate/evidence.js";
+import { globToRegExp, touchedHigh, type RiskMap } from "../verify/risk-map.js";
+import { parseJsonReport, checkAllSkipped, checkAssertionChanges } from "../verify/meta.js";
+import { runVerify, checkEvidence } from "../verify/run.js";
+import { installHook } from "../verify/hook.js";
+import { readEvidence } from "../verify/evidence.js";
 
 const map: RiskMap = { entries: [{ glob: "src/core/**", tier: "high", invariants: ["inv-1"] }, { glob: "docs/**", tier: "low" }] };
 
@@ -42,16 +42,16 @@ describe("meta-checks", () => {
 
 const sh = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
 
-describe("gate end to end (temp repo)", () => {
+describe("verify end to end (temp repo)", () => {
   let dir: string, remote: string;
   const quiet = () => {};
   const commit = (msg: string) => { sh(dir, "add", "-A"); sh(dir, "commit", "-qm", msg); };
   const write = (rel: string, c: string) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), c); };
-  const setGate = (steps: object[]) => write(".squadrant/gate.json", JSON.stringify({ base: "main", steps }));
+  const setGate = (steps: object[]) => write(".squadrant/verify.json", JSON.stringify({ base: "main", steps }));
 
   beforeEach(() => {
-    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gate-repo-")));
-    remote = fs.mkdtempSync(path.join(os.tmpdir(), "gate-remote-"));
+    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "verify-repo-")));
+    remote = fs.mkdtempSync(path.join(os.tmpdir(), "verify-remote-"));
     sh(remote, "init", "-q", "--bare");
     sh(dir, "init", "-q", "-b", "main");
     sh(dir, "config", "user.email", "t@t"); sh(dir, "config", "user.name", "t");
@@ -65,7 +65,7 @@ describe("gate end to end (temp repo)", () => {
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(remote, { recursive: true, force: true }); });
 
   it("writes evidence + summary; evidence is gitignored and never committed", () => {
-    const { evidence, file } = runGate({ repo: dir, log: quiet });
+    const { evidence, file } = runVerify({ repo: dir, log: quiet });
     expect(evidence.green).toBe(true);
     expect(fs.existsSync(file.replace(/\.json$/, ".md"))).toBe(true);
     expect(sh(dir, "check-ignore", file)).toBeTruthy();
@@ -75,13 +75,13 @@ describe("gate end to end (temp repo)", () => {
 
   it("failing step → red evidence", () => {
     setGate([{ name: "bad", command: "false" }]);
-    expect(runGate({ repo: dir, log: quiet }).evidence.green).toBe(false);
+    expect(runVerify({ repo: dir, log: quiet }).evidence.green).toBe(false);
   });
 
-  it("all-skipped db spec fails the gate", () => {
+  it("all-skipped db spec fails verification", () => {
     write("rep.json", JSON.stringify({ numTotalTests: 1, numPassedTests: 0, numFailedTests: 0, numPendingTests: 1, testResults: [{ name: "db.spec.ts", assertionResults: [{ status: "skipped" }] }] }));
-    setGate([{ name: "db", kind: "db", parse: "json", command: "cp rep.json \"$SQUADRANT_GATE_JSON\"" }]);
-    const { evidence } = runGate({ repo: dir, log: quiet });
+    setGate([{ name: "db", kind: "db", parse: "json", command: "cp rep.json \"$SQUADRANT_VERIFY_JSON\"" }]);
+    const { evidence } = runVerify({ repo: dir, log: quiet });
     expect(evidence.green).toBe(false);
     expect(evidence.metaFailures[0]?.check).toBe("all-skipped");
   });
@@ -90,14 +90,28 @@ describe("gate end to end (temp repo)", () => {
     sh(dir, "checkout", "-qb", "feat");
     write("src/core/a.test.ts", "expect(1).toBe(2);\n");
     commit("tweak");
-    expect(runGate({ repo: dir, log: quiet }).evidence.green).toBe(false);
+    expect(runVerify({ repo: dir, log: quiet }).evidence.green).toBe(false);
     sh(dir, "commit", "-q", "--allow-empty", "-m", "note\n\ntest-change: spec was wrong");
-    const { evidence } = runGate({ repo: dir, log: quiet });
+    const { evidence } = runVerify({ repo: dir, log: quiet });
     expect(evidence.green).toBe(true);
     expect(evidence.touchedHigh[0]?.file).toBe("src/core/a.test.ts");
   });
 
   describe("pre-push hook", () => {
+    it("replays git's stdin to the chained hook even when verify steps consume stdin", () => {
+      const hp = path.join(dir, ".git/hooks/pre-push");
+      const seen = path.join(dir, "seen.txt");
+      fs.writeFileSync(hp, `#!/bin/sh\ncat > "${seen}"\n`, { mode: 0o755 });
+      installHook(dir, "run");
+      const bin = fs.mkdtempSync(path.join(os.tmpdir(), "verify-bin-"));
+      // Stub verify that tries to read stdin (must get /dev/null) and succeeds.
+      fs.writeFileSync(path.join(bin, "squadrant"), "#!/bin/sh\ncat >/dev/null\n", { mode: 0o755 });
+      const r = spawnSync(hp, ["origin", "url"], { cwd: dir, input: "refs/heads/main abc refs/heads/main def\n", encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+      expect(r.status).toBe(0);
+      expect(fs.readFileSync(seen, "utf8")).toBe("refs/heads/main abc refs/heads/main def\n");
+      fs.rmSync(bin, { recursive: true, force: true });
+    });
+
     it("chains an existing hook, refuses to clobber a second foreign hook", () => {
       const hp = path.join(dir, ".git/hooks/pre-push");
       fs.writeFileSync(hp, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -111,18 +125,18 @@ describe("gate end to end (temp repo)", () => {
       expect(checkEvidence(dir).ok).toBe(false);
       setGate([{ name: "bad", command: "false" }]);
       commit("gate");
-      runGate({ repo: dir, log: quiet });
+      runVerify({ repo: dir, log: quiet });
       expect(checkEvidence(dir).message).toMatch(/RED/);
       setGate([{ name: "ok", command: "true" }]);
       commit("gate2");
-      runGate({ repo: dir, log: quiet });
+      runVerify({ repo: dir, log: quiet });
       expect(checkEvidence(dir).ok).toBe(true);
       expect(readEvidence(dir, sh(dir, "rev-parse", "HEAD"))?.green).toBe(true);
     });
 
     it("installed hook blocks a real push when the gate command fails, allows when it passes", () => {
       // Stub `squadrant` on PATH: exits 0 only when .allow exists.
-      const bin = fs.mkdtempSync(path.join(os.tmpdir(), "gate-bin-"));
+      const bin = fs.mkdtempSync(path.join(os.tmpdir(), "verify-bin-"));
       fs.writeFileSync(path.join(bin, "squadrant"), `#!/bin/sh\n[ -f "${dir}/.allow" ]\n`, { mode: 0o755 });
       const push = () => spawnSync("git", ["push", "-q", "origin", "main"], { cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
       installHook(dir, "run");
