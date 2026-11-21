@@ -21,6 +21,10 @@ export interface SessionActivity {
   /** Local calendar days (YYYY-MM-DD) with transcript entries. */
   activeDays: string[];
   wroteHandoff: boolean;
+  /** The transcript's `customTitle` (e.g. `squadrant-captain-<p>`), when it has one. */
+  title?: string;
+  /** No transcript file on disk: lastActivityMs is just startedAt and there is nothing to read. */
+  transcriptMissing?: boolean;
 }
 
 export interface SessionToRead {
@@ -32,6 +36,8 @@ export interface SessionToRead {
   activeDays: string[];
   wroteHandoff: boolean;
   transcriptPath: string;
+  /** True when the transcript file is gone — do not try to read it. */
+  transcriptMissing: boolean;
 }
 
 export interface Freshness {
@@ -70,7 +76,9 @@ export function computeFreshness(
   const byActivity = (a: SessionActivity, b: SessionActivity) => b.lastActivityMs - a.lastActivityMs;
   if (!handoff) {
     const recent = sessions.filter((s) => nowMs - s.lastActivityMs <= noHandoffWindowMs).sort(byActivity);
-    return { fresh: false, ageDays: null, warning: "no handoff found (live or archived) — rebuild state from the listed sessions", sessionsToRead: recent };
+    const gone = recent.filter((s) => s.transcriptMissing).length;
+    const note = gone > 0 ? `; ${gone} listed session(s) have no transcript file (transcriptMissing: true) and cannot be read` : "";
+    return { fresh: false, ageDays: null, warning: `no handoff found (live or archived), rebuild state from the readable sessions${note}`, sessionsToRead: recent };
   }
   const ageDays = dayNumber(nowMs) - dayNumber(handoff.writtenAtMs);
   const later = sessions.filter((s) => s.lastActivityMs > handoff.writtenAtMs + HANDOFF_GRACE_MS).sort(byActivity);
@@ -78,21 +86,27 @@ export function computeFreshness(
   if (ageDays > 1) reasons.push(`old handoff from ${localDay(handoff.writtenAtMs)} (${ageDays} days ago)`);
   if (later.length > 0) reasons.push(`${later.length} other captain session(s) active after it was written`);
   if (reasons.length > 0 && handoff.source === "archive") reasons.unshift("no live handoff.json; using the newest archived (already-read) one");
+  const missing = later.filter((s) => s.transcriptMissing).length;
+  if (missing > 0) reasons.push(`${missing} of them have no transcript file on disk (transcriptMissing: true), so they cannot be read`);
   const fresh = ageDays <= 1 && later.length === 0;
   return { fresh, ageDays, warning: reasons.length ? reasons.join("; ") : null, sessionsToRead: later };
 }
 
 export function toSessionToRead(s: SessionActivity): SessionToRead {
   const last = new Date(s.lastActivityMs).toISOString();
+  const endedMs = s.record.endedAt ? Date.parse(s.record.endedAt) : NaN;
+  // An end earlier than later activity belongs to a session that was resumed: not its real end.
+  const ended = !Number.isNaN(endedMs) && endedMs >= s.lastActivityMs - 60_000 ? s.record.endedAt : undefined;
   return {
-    name: `${s.record.agent}-captain-${s.record.project}`,
+    name: s.title ?? `${s.record.agent}-captain-${s.record.project}`,
     sessionId: s.record.sessionId,
     startedAt: s.record.startedAt,
     lastActivity: last,
-    endedAt: s.record.endedAt ?? `no end recorded (last activity ${last})`,
+    endedAt: ended ?? `no end recorded (last activity ${last})`,
     activeDays: s.activeDays,
     wroteHandoff: s.wroteHandoff,
     transcriptPath: s.record.transcriptPath,
+    transcriptMissing: s.transcriptMissing === true,
   };
 }
 
@@ -139,20 +153,43 @@ export function archiveLiveHandoff(vault: string, livePath: string, now: Date): 
   return dest;
 }
 
-/** Last activity (transcript mtime), active days and handoff-written flag for one registered session. A missing transcript falls back to startedAt. */
+/** True for a Bash tool_use that runs write-handoff.sh. A substring match is wrong: skill text loaded into the transcript mentions it. */
+function runsWriteHandoff(line: string): boolean {
+  if (!line.includes("write-handoff.sh") || !line.includes('"tool_use"')) return false;
+  try {
+    const content = (JSON.parse(line) as { message?: { content?: unknown } }).message?.content;
+    return Array.isArray(content) && content.some((b: { type?: string; name?: string; input?: { command?: unknown } }) =>
+      b?.type === "tool_use" && b.name === "Bash" && typeof b.input?.command === "string" && /(^|[\s;&|/"'])write-handoff\.sh\b/.test(b.input.command));
+  } catch {
+    return false;
+  }
+}
+
+/** Last activity (transcript mtime), active days, title and handoff-written flag for one registered session. A missing transcript is flagged `transcriptMissing` and falls back to startedAt. */
 export function describeSession(record: CaptainSessionRecord): SessionActivity {
   const started = Date.parse(record.startedAt);
+  let stat: fs.Stats;
+  let text: string;
   try {
-    const stat = fs.statSync(record.transcriptPath);
-    const text = fs.readFileSync(record.transcriptPath, "utf-8");
-    const days = new Set<string>([localDay(started)]);
-    for (const m of text.matchAll(/"timestamp":"([^"]+)"/g)) {
-      const t = Date.parse(m[1]);
-      if (!Number.isNaN(t)) days.add(localDay(t));
-    }
-    days.add(localDay(stat.mtimeMs));
-    return { record, lastActivityMs: Math.max(stat.mtimeMs, started), activeDays: [...days].sort(), wroteHandoff: text.includes("write-handoff.sh") };
+    stat = fs.statSync(record.transcriptPath);
+    text = fs.readFileSync(record.transcriptPath, "utf-8");
   } catch {
-    return { record, lastActivityMs: started, activeDays: [localDay(started)], wroteHandoff: false };
+    return { record, lastActivityMs: started, activeDays: [localDay(started)], wroteHandoff: false, transcriptMissing: true };
   }
+  const days = new Set<string>([localDay(started), localDay(stat.mtimeMs)]);
+  for (const m of text.matchAll(/"timestamp":"([^"]+)"/g)) {
+    const t = Date.parse(m[1]);
+    if (!Number.isNaN(t)) days.add(localDay(t));
+  }
+  let title: string | undefined;
+  let wroteHandoff = false;
+  for (const line of text.split("\n")) {
+    if (line.includes('"custom-title"')) {
+      try {
+        const t = (JSON.parse(line) as { customTitle?: unknown }).customTitle;
+        if (typeof t === "string" && t) title = t;
+      } catch { /* skip */ }
+    } else if (!wroteHandoff && runsWriteHandoff(line)) wroteHandoff = true;
+  }
+  return { record, lastActivityMs: Math.max(stat.mtimeMs, started), activeDays: [...days].sort(), wroteHandoff, ...(title ? { title } : {}) };
 }

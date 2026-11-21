@@ -140,7 +140,8 @@ describe("handoff files", () => {
       t,
       [
         JSON.stringify({ timestamp: "2026-11-17T09:00:00.000Z", type: "user" }),
-        JSON.stringify({ timestamp: "2026-11-18T09:00:00.000Z", type: "assistant", text: "bash write-handoff.sh p" }),
+        JSON.stringify({ timestamp: "2026-11-18T09:00:00.000Z", type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "~/.config/squadrant/scripts/write-handoff.sh p '{}'" } }] } }),
+        JSON.stringify({ type: "custom-title", customTitle: "squadrant-captain-p", sessionId: "s" }),
       ].join("\n"),
     );
     const mtime = new Date("2026-11-19T12:00:00Z");
@@ -149,6 +150,44 @@ describe("handoff files", () => {
     expect(s.lastActivityMs).toBe(mtime.getTime());
     expect(s.activeDays.length).toBeGreaterThanOrEqual(3);
     expect(s.wroteHandoff).toBe(true);
+    expect(toSessionToRead(s).name).toBe("squadrant-captain-p");
+  });
+
+  it("wroteHandoff is false when write-handoff.sh only appears in loaded skill text or a non-Bash tool (no false positive)", () => {
+    const t = path.join(tmp, "skill.jsonl");
+    fs.writeFileSync(
+      t,
+      [
+        JSON.stringify({ type: "user", message: { content: "skill: run ~/.config/squadrant/scripts/write-handoff.sh {project}" } }),
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "write-handoff.sh" } }] } }),
+      ].join("\n"),
+    );
+    const s = describeSession({ sessionId: "s", project: "p", agent: "claude", startedAt: "2026-11-17T08:00:00.000Z", cwd: "/x", transcriptPath: t });
+    expect(s.wroteHandoff).toBe(false);
+  });
+
+  it("a missing transcript is flagged transcriptMissing and named in the stale warning", () => {
+    const gone = describeSession({ sessionId: "g", project: "p", agent: "claude", startedAt: new Date(at(2026, 11, 21, 9)).toISOString(), cwd: "/x", transcriptPath: "/nope" });
+    expect(gone.transcriptMissing).toBe(true);
+    expect(toSessionToRead(gone)).toMatchObject({ transcriptMissing: true, name: "claude-captain-p" });
+    const v = computeFreshness({ source: "live", writtenAtMs: at(2026, 11, 20, 18) }, [gone], NOW, WINDOW);
+    expect(v.fresh).toBe(false);
+    expect(v.warning).toContain("transcriptMissing: true");
+    const none = computeFreshness(null, [gone], NOW, WINDOW);
+    expect(none.warning).toContain("transcriptMissing: true");
+  });
+
+  it("registry folds SessionEnd markers onto start records; an end before later activity is ignored", async () => {
+    const { appendCaptainSession, appendCaptainSessionEnd, readCaptainSessionRegistry } = await import("../captain-session-registry.js");
+    const rec = { sessionId: "s1", project: "p", agent: "claude", startedAt: "2026-11-20T08:00:00.000Z", cwd: "/x", transcriptPath: "/t" };
+    appendCaptainSession(ws, rec);
+    appendCaptainSessionEnd(ws, "s1", "2026-11-20T10:00:00.000Z");
+    const [r] = readCaptainSessionRegistry(ws);
+    expect(r.endedAt).toBe("2026-11-20T10:00:00.000Z");
+    expect(readCaptainSessionRegistry(ws)).toHaveLength(1);
+    const act = (lastMs: number): SessionActivity => ({ record: r, lastActivityMs: lastMs, activeDays: [], wroteHandoff: false });
+    expect(toSessionToRead(act(Date.parse("2026-11-20T10:00:00.000Z"))).endedAt).toBe("2026-11-20T10:00:00.000Z");
+    expect(toSessionToRead(act(Date.parse("2026-11-21T10:00:00.000Z"))).endedAt).toMatch(/^no end recorded/);
   });
 
   it("describeSession falls back to startedAt when the transcript is missing", () => {
