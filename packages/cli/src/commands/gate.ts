@@ -280,7 +280,7 @@ export function runGateStatus(
 
 export function gateCommand(): Command {
   const gate = new Command("gate").description(
-    "Permission gate (#782/#854): get/set defaults.gate.mode; 'claude <event>' is an internal hook handler",
+    "Local gate (#1136): run .squadrant/gate.json steps and write SHA-keyed evidence; also the permission gate (#782/#854): get/set defaults.gate.mode",
   );
 
   gate

@@ -1263,6 +1263,16 @@ The captain coordinates crews; deep discussion with the operator happens in a **
 - **Second trigger (2026-10-27):** when the operator's design or decision discussion runs 3 or more turns on one topic, or an operator answer turns into a discussion, the captain offers "Move this to thread `<topic>`?" and opens it only after a yes.
 - **Operator answers in the captain pane:** a clear answer is forwarded verbatim with `crew send` ("Operator answered (in captain pane): …"; `crew answer` for an open rendered prompt; a level-3 decision also gets a handoff `decisions` line) and covers that one prompt only. A discussion turn gets a thread offer. An ambiguous answer gets one short question before forwarding.
 
+## Local gate and evidence (#1136)
+
+`squadrant gate` is the local CI-equivalent: it runs the repo's declared steps and writes SHA-keyed evidence, so a push can be judged without hosted CI. Config is plain JSON; it works for any agent.
+
+- **Config** `.squadrant/gate.json`: `{ "base": "develop", "steps": [{ "name", "command", "kind"?: "unit"|"db"|"integration", "required"?: true, "parse"?: "json" }] }`. With `parse: "json"` the command must write a vitest/jest JSON report to `$SQUADRANT_GATE_JSON` (e.g. `--reporter=json --outputFile.json="$SQUADRANT_GATE_JSON"`); ran/skipped/failed counts come from it. Unparsed steps record the exit code only (`counts: null`).
+- **Run** `squadrant gate [--repo <path>] [--base <branch>] [--test-change <reason>]` writes `.squadrant/evidence/<HEAD-sha>.json` plus a `.md` summary and exits non-zero on a failed required step or meta-check. `.squadrant/evidence/` is added to `.gitignore`; evidence is never committed. `dirty: true` records an uncommitted tree.
+- **Meta-checks** (fail the gate even when exit codes are 0): (1) a `db`/`integration` step that ran 0 tests, or a spec file in one whose tests are all skipped; (2) an assertion line removed/modified in a **high-tier** spec (per the risk-map) with no `test-change:` line in a commit message in `base..HEAD`, no `--test-change`, and no `SQUADRANT_TEST_CHANGE` env; (3) touched high-tier files and their invariants are always listed in the evidence.
+- **Hook** `squadrant gate install-hook --mode run|check` installs `pre-push`. `run` runs the gate and blocks on failure; `check` (`squadrant gate --check`) only verifies green, clean-tree evidence exists for HEAD (fast). An existing foreign hook is chained (moved to `pre-push.pre-squadrant` and run after the gate); a second foreign hook is refused.
+- **Risk-map** `.squadrant/risk-map.json`: `{ "entries": [{ "glob", "tier": "high"|"med"|"low", "invariants"?: [], "requiredSteps"?: [] }] }`. Globs support `**`, `*`, `?`. This repo's map and gate config are the reference example.
+
 ## Human review guide (#1012)
 
 `squadrant:human-review-guide` is a general skill (`plugin/skills/human-review-guide/`, `/squadrant:human-review-guide` in any session) that gives the operator a short, well-sourced guide for the **human gate** of crew PRs: intent and scope, public contracts, architecture trade-offs, test validity and a live comparison with the design. Machines (crew self-review, captain agent review, CI, lint, guard tests, KB rule checks, a repo's PR review tool) run first; the human gate covers only what those gates cannot see or did not cover.
