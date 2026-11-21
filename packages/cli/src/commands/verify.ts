@@ -4,8 +4,10 @@ import path from "node:path";
 import fs from "node:fs";
 import { Command } from "commander";
 import chalk from "chalk";
-import { runVerify, checkEvidence } from "../lib/verify/run.js";
+import { runVerify, checkEvidence, changedFiles } from "../lib/verify/run.js";
 import { installHook, type HookMode } from "../lib/verify/hook.js";
+import { assessRisk, loadRiskMap } from "../lib/verify/risk-map.js";
+import { loadVerifyConfig } from "../lib/verify/config.js";
 import { git } from "../lib/verify/evidence.js";
 
 const toplevel = (p?: string) => git(path.resolve(p ?? process.cwd()), ["rev-parse", "--show-toplevel"]);
@@ -51,6 +53,25 @@ export function verifyCommand(): Command {
         if (r.chained) console.log(chalk.dim(`Chained existing hook: ${r.chained}`));
       } catch (err) {
         console.error(chalk.red(`verify install-hook: ${(err as Error).message}`));
+        process.exit(1);
+      }
+    });
+
+  verify
+    .command("risk")
+    .description("Print the diff's risk label, touched high-tier invariants and required steps as JSON")
+    .option("--base <branch>", "base branch (default: verify.json base or develop)")
+    .option("--repo <path>", "repo (default: cwd)")
+    .action((opts: { base?: string; repo?: string }) => {
+      try {
+        const repo = toplevel(opts.repo);
+        let cfgBase: string | undefined;
+        try { cfgBase = loadVerifyConfig(repo).base; } catch { /* risk works without verify.json */ }
+        const files = changedFiles(repo, opts.base ?? cfgBase ?? "develop");
+        const r = assessRisk(loadRiskMap(repo), files);
+        console.log(JSON.stringify({ label: r.label, files, invariants: r.touchedHigh, requiredSteps: r.requiredSteps }, null, 2));
+      } catch (err) {
+        console.error(chalk.red(`verify risk: ${(err as Error).message}`));
         process.exit(1);
       }
     });

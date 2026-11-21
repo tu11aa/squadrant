@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { loadVerifyConfig } from "./config.js";
-import { loadRiskMap, touchedHigh } from "./risk-map.js";
+import { assessRisk, loadRiskMap } from "./risk-map.js";
 import { checkAllSkipped, checkAssertionChanges, parseJsonReport } from "./meta.js";
 import { ensureEvidenceIgnored, git, readEvidence, writeEvidence, type Evidence, type MetaFailure, type StepResult } from "./evidence.js";
 
@@ -16,11 +16,17 @@ export interface RunOptions {
   log?: (s: string) => void;
 }
 
-function mergeBase(repo: string, base: string): string | null {
+export function mergeBase(repo: string, base: string): string | null {
   for (const ref of [`origin/${base}`, base]) {
     try { return git(repo, ["merge-base", ref, "HEAD"]); } catch { /* try next */ }
   }
   return null;
+}
+
+/** Files changed between the merge-base with `base` and HEAD ([] when there is no base). */
+export function changedFiles(repo: string, base: string): string[] {
+  const mb = mergeBase(repo, base);
+  return mb ? git(repo, ["diff", "--name-only", mb, "HEAD"]).split("\n").filter(Boolean) : [];
 }
 
 export function runVerify(opts: RunOptions): { evidence: Evidence; file: string } {
@@ -52,7 +58,12 @@ export function runVerify(opts: RunOptions): { evidence: Evidence; file: string 
 
   const mb = mergeBase(repo, opts.base ?? config.base ?? "develop");
   const files = mb ? git(repo, ["diff", "--name-only", mb, "HEAD"]).split("\n").filter(Boolean) : [];
-  const high = touchedHigh(map, files);
+  const risk = assessRisk(map, files);
+  for (const name of risk.requiredSteps) {
+    const step = steps.find((s) => s.name === name);
+    if (!step) metaFailures.push({ check: "required-step", message: `risk-map requires step "${name}" for this diff but verify.json has no such step` });
+    else if (!step.required) metaFailures.push({ check: "required-step", message: `step "${name}" is required by the risk-map but marked required:false` });
+  }
   if (mb) {
     const messages = git(repo, ["log", `${mb}..HEAD`, "--format=%B"]);
     const hasNote = /^test-change:/im.test(messages) || !!(opts.testChange ?? process.env.SQUADRANT_TEST_CHANGE);
@@ -60,7 +71,7 @@ export function runVerify(opts: RunOptions): { evidence: Evidence; file: string 
   }
 
   const green = steps.every((s) => !s.required || s.exitCode === 0) && metaFailures.length === 0;
-  const evidence: Evidence = { sha, dirty, startedAt: new Date().toISOString(), green, steps, metaFailures, touchedHigh: high };
+  const evidence: Evidence = { sha, dirty, startedAt: new Date().toISOString(), green, steps, metaFailures, touchedHigh: risk.touchedHigh, riskLabel: risk.label, requiredSteps: risk.requiredSteps };
   return { evidence, file: writeEvidence(repo, evidence) };
 }
 
