@@ -1,0 +1,12 @@
+{
+  "base": "develop",
+  "steps": [
+    { "name": "build", "command": "pnpm build", "kind": "unit" },
+    {
+      "name": "test",
+      "command": "pnpm test --reporter=default --reporter=json --outputFile.json=\"$SQUADRANT_VERIFY_JSON\"",
+      "kind": "unit",
+      "parse": "json"
+    }
+  ]
+}
