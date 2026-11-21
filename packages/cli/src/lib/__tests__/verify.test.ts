@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { globToRegExp, touchedHigh, type RiskMap } from "../verify/risk-map.js";
+import { globToRegExp, touchedHigh, assessRisk, type RiskMap } from "../verify/risk-map.js";
 import { parseJsonReport, checkAllSkipped, checkAssertionChanges } from "../verify/meta.js";
 import { runVerify, checkEvidence } from "../verify/run.js";
 import { installHook } from "../verify/hook.js";
@@ -19,6 +19,16 @@ describe("risk-map", () => {
   it("touchedHigh lists invariants; low-only is empty", () => {
     expect(touchedHigh(map, ["src/core/x.ts", "docs/a.md"])).toEqual([{ file: "src/core/x.ts", invariants: ["inv-1"] }]);
     expect(touchedHigh(map, ["docs/a.md"])).toEqual([]);
+  });
+});
+
+describe("assessRisk", () => {
+  const m: RiskMap = { entries: [{ glob: "src/core/**", tier: "high", invariants: ["inv-1"], requiredSteps: ["db"] }, { glob: "src/app/**", tier: "med" }, { glob: "docs/**", tier: "low" }] };
+  it("low-only diff → low", () => expect(assessRisk(m, ["docs/a.md", "other.txt"])).toEqual({ label: "low", touchedHigh: [], requiredSteps: [] }));
+  it("empty diff → low", () => expect(assessRisk(m, []).label).toBe("low"));
+  it("med beats low", () => expect(assessRisk(m, ["docs/a.md", "src/app/x.ts"]).label).toBe("med"));
+  it("any high path → high + invariants + required steps", () => {
+    expect(assessRisk(m, ["docs/a.md", "src/core/x.ts"])).toEqual({ label: "high", touchedHigh: [{ file: "src/core/x.ts", invariants: ["inv-1"] }], requiredSteps: ["db"] });
   });
 });
 
@@ -95,6 +105,20 @@ describe("verify end to end (temp repo)", () => {
     const { evidence } = runVerify({ repo: dir, log: quiet });
     expect(evidence.green).toBe(true);
     expect(evidence.touchedHigh[0]?.file).toBe("src/core/a.test.ts");
+  });
+
+  it("evidence carries the risk label; a risk-map required step that is missing fails verify", () => {
+    sh(dir, "checkout", "-qb", "feat");
+    write("src/core/b.ts", "x\n");
+    write(".squadrant/risk-map.json", JSON.stringify({ entries: [{ glob: "src/core/**", tier: "high", invariants: ["inv-1"], requiredSteps: ["db"] }] }));
+    commit("core change");
+    const red = runVerify({ repo: dir, log: quiet }).evidence;
+    expect(red.riskLabel).toBe("high");
+    expect(red.green).toBe(false);
+    expect(red.metaFailures[0]?.check).toBe("required-step");
+    setGate([{ name: "ok", command: "true" }, { name: "db", command: "true", kind: "db" }]);
+    commit("add db step");
+    expect(runVerify({ repo: dir, log: quiet }).evidence.green).toBe(true);
   });
 
   describe("pre-push hook", () => {

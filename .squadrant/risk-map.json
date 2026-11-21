@@ -1,12 +1,12 @@
 {
   "entries": [
-    { "glob": "packages/core/src/state-machine*", "tier": "high", "invariants": ["Task state transitions are monotonic; no hook may terminalize a task (anti-#2576)"] },
-    { "glob": "packages/core/src/__tests__/state-machine*", "tier": "high", "invariants": ["Task state transitions are monotonic; no hook may terminalize a task (anti-#2576)"] },
-    { "glob": "packages/core/src/daemon/**", "tier": "high", "invariants": ["The daemon never serves a socket hijacked by another process (#360) and survives restart without losing mailbox entries"] },
-    { "glob": "packages/core/src/delivery/**", "tier": "high", "invariants": ["Delivery verdicts come from agent receipts, never pane scraping; no message is dropped silently"] },
-    { "glob": "packages/core/src/session-delivery*", "tier": "high", "invariants": ["Delivery verdicts come from agent receipts, never pane scraping; no message is dropped silently"] },
-    { "glob": "packages/workspaces/src/native-hooks/**", "tier": "high", "invariants": ["~/.claude/settings.json reconcile is idempotent and non-clobbering; squadrant-owned hooks are always repaired"] },
-    { "glob": "packages/agents/src/interactive/claude.ts", "tier": "high", "invariants": ["Hook guards (memory write, subagent signal, attribution) fail open and never block the main session"] },
+    { "glob": "packages/core/src/state-machine*", "tier": "high", "requiredSteps": ["test"], "invariants": ["Task state transitions are monotonic; no hook may terminalize a task (anti-#2576)"] },
+    { "glob": "packages/core/src/__tests__/state-machine*", "tier": "high", "requiredSteps": ["test"], "invariants": ["Task state transitions are monotonic; no hook may terminalize a task (anti-#2576)"] },
+    { "glob": "packages/core/src/daemon/**", "tier": "high", "requiredSteps": ["test"], "invariants": ["The daemon never serves a socket hijacked by another process (#360) and survives restart without losing mailbox entries"] },
+    { "glob": "packages/core/src/delivery/**", "tier": "high", "requiredSteps": ["test"], "invariants": ["Delivery verdicts come from agent receipts, never pane scraping; no message is dropped silently"] },
+    { "glob": "packages/core/src/session-delivery*", "tier": "high", "requiredSteps": ["test"], "invariants": ["Delivery verdicts come from agent receipts, never pane scraping; no message is dropped silently"] },
+    { "glob": "packages/workspaces/src/native-hooks/**", "tier": "high", "requiredSteps": ["test"], "invariants": ["~/.claude/settings.json reconcile is idempotent and non-clobbering; squadrant-owned hooks are always repaired"] },
+    { "glob": "packages/agents/src/interactive/claude.ts", "tier": "high", "requiredSteps": ["test"], "invariants": ["Hook guards (memory write, subagent signal, attribution) fail open and never block the main session"] },
     { "glob": "packages/cli/src/**", "tier": "med" },
     { "glob": "docs/**", "tier": "low" }
   ]

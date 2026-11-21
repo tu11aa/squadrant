@@ -25,6 +25,7 @@ export interface Evidence {
   metaFailures: MetaFailure[];
   touchedHigh: HighTouch[];
   riskLabel?: string;
+  requiredSteps?: string[];
 }
 
 export function git(repo: string, args: string[]): string {

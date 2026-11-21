@@ -68,3 +68,18 @@ export function touchedHigh(map: RiskMap | null, files: string[]): HighTouch[] {
   }
   return out;
 }
+
+export interface RiskAssessment {
+  label: Tier;
+  touchedHigh: HighTouch[];
+  requiredSteps: string[];
+}
+
+/** Label = highest tier among matched files (no match, or no files → low). */
+export function assessRisk(map: RiskMap | null, files: string[]): RiskAssessment {
+  const high = touchedHigh(map, files);
+  const matched = map ? files.flatMap((f) => matchEntries(map, f)) : [];
+  const label: Tier = high.length ? "high" : matched.some((e) => e.tier === "med") ? "med" : "low";
+  const requiredSteps = [...new Set(matched.filter((e) => e.tier === "high").flatMap((e) => e.requiredSteps ?? []))];
+  return { label, touchedHigh: high, requiredSteps };
+}
