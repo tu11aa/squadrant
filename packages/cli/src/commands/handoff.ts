@@ -32,6 +32,8 @@ import { extractTranscriptTail } from "../lib/handoff-transcript.js";
 import { readNewestArchivedHandoff } from "../lib/handoff-archive.js";
 import { readCaptainSessionRegistry, selectGapSessions } from "../lib/captain-session-registry.js";
 import { captainContext } from "../lib/captain-context.js";
+import { findHandoff, computeFreshness, describeSession, archiveLiveHandoff, toSessionToRead } from "../lib/handoff-read.js";
+import type { FoundHandoff, SessionToRead } from "../lib/handoff-read.js";
 import { assembleHandoffFacts, SESSION_WINDOW_MS } from "../lib/handoff-facts.js";
 import type { HandoffFacts, SessionWithTranscript } from "../lib/handoff-facts.js";
 
@@ -128,6 +130,76 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
   });
 }
 
+export interface HandoffReadResult {
+  exists: boolean;
+  handoff: unknown;
+  fresh: boolean;
+  ageDays: number | null;
+  source: FoundHandoff["source"] | null;
+  path: string | null;
+  archivedTo: string | null;
+  warning: string | null;
+  /** Present only when stale: read these transcripts (newest first) before reporting ready. */
+  instruction: string | null;
+  sessionsToRead: SessionToRead[];
+}
+
+export interface HandoffReadDeps {
+  now?: string;
+  currentSessionId?: string | null;
+  /** Skip archiving the live file. */
+  keep?: boolean;
+  windowMs?: number;
+}
+
+/** #1155: the one handoff reader. Live → newest archive (workspace + legacy spoke, #983), archives the live file once read, and returns a freshness verdict. */
+export function runHandoffRead(project: string, deps: HandoffReadDeps = {}): HandoffReadResult {
+  const proj = loadConfig().projects[project];
+  if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
+
+  const nowIso = deps.now ?? new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
+  const vault = workspacePath(project);
+  const vaults = [vault, ...(proj.spokeVault ? [proj.spokeVault] : []), path.join(os.homedir(), "squadrant-hub", "spokes", project)];
+
+  const found = findHandoff([...new Set(vaults)]);
+  const currentSessionId = deps.currentSessionId !== undefined ? deps.currentSessionId : (process.env.CLAUDE_CODE_SESSION_ID ?? null);
+
+  let sessions: ReturnType<typeof describeSession>[] = [];
+  let unknownSelf = false;
+  if (currentSessionId === null) {
+    unknownSelf = true; // can't tell which registered session is us — listing it would make the captain read itself
+  } else {
+    const seen = new Set<string>();
+    sessions = vaults
+      .flatMap((v) => readCaptainSessionRegistry(v))
+      .filter((r) => r.sessionId !== currentSessionId && !seen.has(r.sessionId) && seen.add(r.sessionId))
+      .map(describeSession);
+  }
+
+  const verdict = computeFreshness(found, sessions, nowMs, deps.windowMs ?? SESSION_WINDOW_MS);
+  const warnings = [verdict.warning, unknownSelf ? "current session id unknown (CLAUDE_CODE_SESSION_ID unset): previous sessions could not be listed safely" : null].filter(Boolean);
+  const fresh = verdict.fresh && !unknownSelf;
+
+  let archivedTo: string | null = null;
+  if (found?.source === "live" && !deps.keep) archivedTo = archiveLiveHandoff(vault, found.path, new Date(nowMs));
+
+  return {
+    exists: found !== null,
+    handoff: found?.content ?? null,
+    fresh,
+    ageDays: verdict.ageDays,
+    source: found?.source ?? null,
+    path: found?.path ?? null,
+    archivedTo,
+    warning: warnings.length ? warnings.join("; ") : null,
+    instruction: fresh
+      ? null
+      : "STALE: read the previous captain transcripts in sessionsToRead (at least the newest, in full) before reporting ready, and name the sessions you read in the ready report.",
+    sessionsToRead: verdict.sessionsToRead.map(toSessionToRead),
+  };
+}
+
 export const handoffCommand = new Command("handoff").description(
   "Handoff continuity — gather verified facts for the captain to synthesize a handoff from (#650/#651)",
 );
@@ -141,4 +213,14 @@ handoffCommand
   .action(async (project: string, opts: { fetch: boolean }) => {
     const out = await runHandoffFacts(project, { fetch: opts.fetch });
     console.log(JSON.stringify(out, null, 2));
+  });
+
+handoffCommand
+  .command("read <project>")
+  .description(
+    "The one handoff reader (#1155): live handoff.json, else the newest archive; archives the live file once read; returns { fresh, ageDays, source, path, warning, sessionsToRead[] }. A stale verdict means read the listed captain transcripts before reporting ready.",
+  )
+  .option("--keep", "do not archive the live handoff.json after reading", false)
+  .action((project: string, opts: { keep: boolean }) => {
+    console.log(JSON.stringify(runHandoffRead(project, { keep: opts.keep }), null, 2));
   });

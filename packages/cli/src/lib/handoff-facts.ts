@@ -163,6 +163,8 @@ export interface CaptainSessionRecord {
   startedAt: string;
   cwd: string;
   transcriptPath: string;
+  /** SessionEnd time, folded in from the registry's end markers when the hook recorded one. */
+  endedAt?: string;
 }
 
 export interface SessionWithTranscript {

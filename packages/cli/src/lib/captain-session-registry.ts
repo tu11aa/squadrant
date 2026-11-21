@@ -21,21 +21,31 @@ export function appendCaptainSession(spokeVault: string, record: CaptainSessionR
   fs.appendFileSync(file, JSON.stringify(record) + "\n");
 }
 
+/** SessionEnd hook: append an end marker for a session. Folded onto its start record by `readCaptainSessionRegistry`. */
+export function appendCaptainSessionEnd(spokeVault: string, sessionId: string, endedAt: string): void {
+  fs.mkdirSync(spokeVault, { recursive: true });
+  fs.appendFileSync(path.join(spokeVault, CAPTAIN_SESSION_REGISTRY_FILE), JSON.stringify({ event: "end", sessionId, endedAt }) + "\n");
+}
+
 /** Read every recorded session. A corrupt line is skipped, not fatal. */
 export function readCaptainSessionRegistry(spokeVault: string): CaptainSessionRecord[] {
   const file = path.join(spokeVault, CAPTAIN_SESSION_REGISTRY_FILE);
   if (!fs.existsSync(file)) return [];
 
   const records: CaptainSessionRecord[] = [];
+  const ends = new Map<string, string>();
   for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
     if (!line.trim()) continue;
     try {
-      records.push(JSON.parse(line) as CaptainSessionRecord);
+      const rec = JSON.parse(line) as CaptainSessionRecord & { event?: string; endedAt?: string };
+      if (rec.event === "end") {
+        if (rec.endedAt) ends.set(rec.sessionId, rec.endedAt); // later end wins (resumed sessions end again)
+      } else records.push(rec);
     } catch {
       // skip corrupt line
     }
   }
-  return records;
+  return records.map((r) => (ends.has(r.sessionId) ? { ...r, endedAt: ends.get(r.sessionId) } : r));
 }
 
 export interface GapSessionSelection {

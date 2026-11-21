@@ -35,7 +35,7 @@ Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runti
 1. **Fetch and gather facts:** `squadrant handoff facts {project} --fetch` (updates remote refs so branch state is verified, not stale).
 2. **Check branchState flags:** Act on `upstreamStatus` (`behind`, `diverged`, `upstream-gone`) explicitly.
 3. **Identify current state:** List live crews (`squadrant crew list`) and current task.
-4. **Read handoff once:** wait for step 1 to finish first, never run `read-handoff.sh` in parallel with `handoff facts`; then if `checkpoint.content` in the facts is set, that is the handoff; otherwise run `~/.config/squadrant/scripts/read-handoff.sh {project}`.
+4. **Read handoff + freshness:** `squadrant handoff read {project}` (live handoff, else newest archive; archives the live file once read; safe alongside `handoff facts`). If `fresh` is `false`, read the transcripts in `sessionsToRead` (newest first, at least the newest in full; skip `transcriptMissing: true` entries, their file is gone) before reporting ready, with or without a handoff, and name the sessions you read in your ready report.
 5. If your agent has the `captain-startup` skill, use it for this contract, then the short `captain-ops` core: its trigger table names the reference file to read before each later action.
 
 **After a compact:** if the `captain-ops` trigger table is not in your context, load `captain-ops` before your next action.

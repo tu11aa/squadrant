@@ -16,7 +16,7 @@ import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite, d
 import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } from "@squadrant/shared";
 import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
-import { appendCaptainSession } from "../lib/captain-session-registry.js";
+import { appendCaptainSession, appendCaptainSessionEnd } from "../lib/captain-session-registry.js";
 import { compactHandoffContext, compactCoreContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
 import { renderLiveLedger } from "../lib/compact-ledger.js";
 import { gatherLiveCrews, defaultCommandRunner } from "../lib/handoff-live-repo.js";
@@ -120,6 +120,18 @@ function recordCaptainSessionStart(payload: unknown): void {
   } catch {
     // Best-effort — a registry-write failure must never block the session.
   }
+}
+
+/** #1155: SessionEnd for a captain session — append an end marker so `handoff read` can report when it ended. Best-effort, never throws. */
+function recordCaptainSessionEnd(payload: unknown): void {
+  try {
+    const sessionId = (payload as { session_id?: unknown } | null)?.session_id;
+    if (typeof sessionId !== "string" || !sessionId) return;
+    const config = loadConfig();
+    const project = resolveCurrentProject(config);
+    if (!project || !config.projects[project]) return;
+    appendCaptainSessionEnd(workspacePath(project), sessionId, new Date().toISOString());
+  } catch { /* best-effort */ }
 }
 
 /** #1015: best-effort — a daemon that is down simply contributes no ledger. */
@@ -326,6 +338,10 @@ export function hooksCommand(): Command {
       // side-effect-only — falls through to the same exit-0 hook contract.
       if (sub === "session-start" && process.env.SQUADRANT_ROLE === "captain") {
         recordCaptainSessionStart(payload);
+      }
+
+      if (sub === "session-end" && process.env.SQUADRANT_ROLE === "captain") {
+        recordCaptainSessionEnd(payload);
       }
 
       // #782: the PermissionRequest event is owned by the permission gate — the

@@ -34,15 +34,6 @@ describe("workspace-backed scripts (#983)", () => {
     expect(fs.existsSync(path.join(tmp, "hub"))).toBe(false);
   });
 
-  it("write then read lands the archived copy in workspace/p/handoffs/", () => {
-    const spoke = path.join(tmp, "hub", "spokes", "p");
-    sh("write-handoff.sh", spoke, '{"a": 1}');
-    sh("read-handoff.sh", spoke);
-    const archived = fs.readdirSync(path.join(tmp, "ws", "p", "handoffs"));
-    expect(archived).toHaveLength(1);
-    expect(fs.existsSync(path.join(tmp, "ws", "p", "handoff.json"))).toBe(false);
-  });
-
   it("record-side-handoff.sh writes workspace/p/side-handoffs/<slug>.md", () => {
     sh("record-side-handoff.sh", path.join(tmp, "hub", "spokes", "p"), "KB Paths", "research", "summary");
     expect(fs.readFileSync(path.join(tmp, "ws", "p", "side-handoffs", "kb-paths.md"), "utf8")).toContain("summary");
