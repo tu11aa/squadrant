@@ -38,15 +38,16 @@ export function evidencePath(repo: string, sha: string): string {
   return path.join(repo, EVIDENCE_DIR, `${sha}.json`);
 }
 
-/** Add `.squadrant/evidence/` to the repo's .gitignore if it is not already ignored. */
+/** Ignore `.squadrant/evidence/` via .git/info/exclude (worktree-safe) so a run never dirties tracked files. No-op if already ignored. */
 export function ensureEvidenceIgnored(repo: string): void {
   try {
     git(repo, ["check-ignore", "-q", `${EVIDENCE_DIR}/x.json`]);
     return;
   } catch { /* not ignored yet */ }
-  const gi = path.join(repo, ".gitignore");
-  const cur = fs.existsSync(gi) ? fs.readFileSync(gi, "utf8") : "";
-  fs.writeFileSync(gi, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${EVIDENCE_DIR}/\n`);
+  const exclude = path.resolve(repo, git(repo, ["rev-parse", "--git-path", "info/exclude"]));
+  const cur = fs.existsSync(exclude) ? fs.readFileSync(exclude, "utf8") : "";
+  fs.mkdirSync(path.dirname(exclude), { recursive: true });
+  fs.writeFileSync(exclude, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${EVIDENCE_DIR}/\n`);
 }
 
 export function renderSummary(e: Evidence): string {

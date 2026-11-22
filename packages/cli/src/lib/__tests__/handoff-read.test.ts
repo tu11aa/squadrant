@@ -51,6 +51,20 @@ describe("computeFreshness", () => {
     expect(v.fresh).toBe(true);
   });
 
+  it("a session started after the handoff and active within the grace window is later work (no grace)", () => {
+    const w = at(2026, 11, 20, 18);
+    const fresh = session("new", w + 8 * 60_000, w + 2 * 60_000);
+    const v = computeFreshness({ source: "live", writtenAtMs: w }, [fresh], NOW, WINDOW);
+    expect(v.fresh).toBe(false);
+    expect(v.sessionsToRead.map((s) => s.record.sessionId)).toEqual(["new"]);
+  });
+
+  it("the writer session active 30s after written_at stays fresh", () => {
+    const w = at(2026, 11, 20, 18);
+    const v = computeFreshness({ source: "live", writtenAtMs: w }, [session("writer", w + 30_000, w - 3_600_000)], NOW, WINDOW);
+    expect(v.fresh).toBe(true);
+  });
+
   it("an archived handoff that is recent and has no later session is still fresh (repeat read after archiving)", () => {
     const v = computeFreshness({ source: "archive", writtenAtMs: at(2026, 11, 21, 8) }, [], NOW, WINDOW);
     expect(v.fresh).toBe(true);
