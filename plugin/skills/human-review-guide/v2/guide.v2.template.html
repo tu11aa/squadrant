@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review page v2</title>
+<!--
+  human-review-guide v2 page. DRAFT: pending operator approval. LOCAL ONLY: never publish or post.
+  Self-contained, no network. The driving session replaces the single `const PAGE = ...` line
+  with facts from `squadrant verify risk` + .squadrant/evidence/<sha>.json + the PR diff.
+-->
+<style>
+:root{--bg:#f7f7f9;--panel:#fff;--text:#1d1f24;--muted:#5d6370;--line:#dcdfe6;--accent:#2f5bea;--ok:#1a7f4b;--warn:#a15c00;--bad:#c0392b;--chip:#eef1f8;--add:#e6f6ec;--del:#fdeaea}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--panel:#1d2026;--text:#e6e8ee;--muted:#9aa1b0;--line:#323744;--accent:#7b9cff;--ok:#4cc38a;--warn:#e0a24a;--bad:#ff7b6b;--chip:#272b34;--add:#17301f;--del:#3a1d1d}}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px 64px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1 1 240px}h2{font-size:16px;margin:24px 0 8px}
+button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}
+button.primary,button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.04em;color:#fff}
+.local{background:var(--bad)}.draft{background:var(--warn)}
+.tier{font-size:13px;font-weight:700;padding:3px 12px;border-radius:99px;color:#fff}
+.tier.high{background:var(--bad)}.tier.med{background:var(--warn)}.tier.low{background:var(--ok)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+.verdict{font-size:17px;font-weight:600}
+.chip{display:inline-block;background:var(--chip);border-radius:99px;padding:1px 10px;font-size:12px;margin:2px 4px 2px 0}
+.chip.ok{color:var(--ok)}.chip.bad{color:var(--bad)}.chip.warn{color:var(--warn);font-weight:700}
+code{background:var(--chip);padding:1px 5px;border-radius:5px;font:13px ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+pre.diff{background:var(--chip);padding:8px 0;border-radius:8px;overflow-x:auto;margin:6px 0;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace}
+pre.diff span{display:block;padding:0 10px;white-space:pre}
+pre.diff .a{background:var(--add)}pre.diff .d{background:var(--del)}pre.diff .h{color:var(--muted)}
+.muted{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}th{color:var(--muted)}
+.q{margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+.choices{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+textarea{width:100%;min-height:54px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px;font:inherit;color:var(--text)}
+ul{margin:4px 0;padding-left:20px}
+.toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><div class="row">
+  <h1 id="title"></h1>
+  <span class="badge draft">DRAFT · pending operator approval</span>
+  <span class="badge local">LOCAL ONLY</span>
+  <span><button id="vi">VI</button> <button id="en">EN</button></span>
+</div></header>
+<main id="app"></main>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+/*PAGE*/
+const PAGE = __PAGE_JSON__;
+/*END PAGE*/
+
+const T = {
+  en: {
+    tier:{high:"HIGH risk: human review",med:"MED risk",low:"LOW risk"},
+    verdict:{high:"Human review needed: core-logic hunks only.",med:"No human review needed (captain-reviewed).",low:"No human review needed."},
+    verdictSub:{med:"Captain review + green local evidence is the gate.",low:"Green local evidence is the gate."},
+    evidence:"Local evidence",from:"read from",ok:"GREEN",red:"RED",stale:"STALE",missing:"MISSING",
+    staleNote:"Evidence is for a different SHA than the PR head. Re-run `squadrant verify` before trusting it.",
+    missingNote:"No evidence file for the PR head SHA. Run `squadrant verify` first; do not merge on this page alone.",
+    step:"step",exit:"exit",time:"time",counts:"ran/skipped/failed",
+    files:"Files in this PR",hunks:"Core-logic hunks",invariant:"Invariant",tests:"Tests that claim to cover it",
+    noTests:"No test names found. Treat as uncovered.",question:"Only you can judge",ok_:"OK",concern:"Concern",note:"Note",
+    explain:"Ask for explainer",copyF:"Copy findings",copied:"Copied",
+    explainPrompt:(h,p)=>`Explain hunk ${h.id} (${h.file}:${h.lines}) of PR #${p.pr} @ ${p.sha.slice(0,12)}: what changed, why, and what would break if it were wrong. Invariant: ${h.invariant}`,
+    anchors:"Anchors are pinned to the SHA",done:"judged"
+  },
+  vi: {
+    tier:{high:"Rủi ro CAO: cần người review",med:"Rủi ro TRUNG BÌNH",low:"Rủi ro THẤP"},
+    verdict:{high:"Cần người review: chỉ các hunk logic lõi.",med:"Không cần người review (captain đã review).",low:"Không cần người review."},
+    verdictSub:{med:"Cổng kiểm: captain review + evidence local xanh.",low:"Cổng kiểm: evidence local xanh."},
+    evidence:"Evidence local",from:"đọc từ",ok:"XANH",red:"ĐỎ",stale:"CŨ",missing:"THIẾU",
+    staleNote:"Evidence thuộc SHA khác với head của PR. Chạy lại `squadrant verify` trước khi tin.",
+    missingNote:"Không có file evidence cho SHA head của PR. Chạy `squadrant verify` trước; đừng merge chỉ dựa vào trang này.",
+    step:"bước",exit:"exit",time:"thời gian",counts:"chạy/bỏ qua/lỗi",
+    files:"File trong PR",hunks:"Hunk logic lõi",invariant:"Bất biến",tests:"Test khẳng định bao phủ",
+    noTests:"Không tìm thấy tên test. Coi như chưa được bao phủ.",question:"Chỉ bạn phán đoán được",ok_:"OK",concern:"Lo ngại",note:"Ghi chú",
+    explain:"Nhờ giải thích",copyF:"Copy kết quả",copied:"Đã copy",
+    explainPrompt:(h,p)=>`Giải thích hunk ${h.id} (${h.file}:${h.lines}) của PR #${p.pr} @ ${p.sha.slice(0,12)}: đổi gì, vì sao, và sai thì hỏng gì. Bất biến: ${h.invariant}`,
+    anchors:"Neo được ghim theo SHA",done:"đã xét"
+  }
+};
+const st = {lang:"en", ans:{}, note:{}};
+try{const l=localStorage.getItem("hrg2.lang"); if(l==="vi"||l==="en") st.lang=l;}catch(e){}
+const $ = (s)=>document.querySelector(s);
+const esc = (s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const tr = (o)=>o&&typeof o==="object"&&("en" in o)?o[st.lang]:o;
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),1200);}
+function copy(text){
+  const done=()=>toast(T[st.lang].copied);
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,()=>fallback());}else fallback();
+  function fallback(){const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");done();}catch(e){}ta.remove();}
+}
+function evidenceState(){
+  const e=PAGE.evidence; if(!e) return "missing";
+  if(e.sha!==PAGE.sha) return "stale";
+  return e.green?"ok":"red";
+}
+function evidenceHtml(t){
+  const s=evidenceState(), e=PAGE.evidence;
+  const cls={ok:"ok",red:"bad",stale:"warn",missing:"warn"}[s];
+  const lab={ok:t.ok,red:t.red,stale:t.stale,missing:t.missing}[s];
+  let h=`<div class="card"><h2 style="margin-top:0">${t.evidence}</h2><span class="chip ${cls}">${lab}</span>`;
+  if(e) h+=`<span class="chip">${esc(e.sha.slice(0,12))}${e.sha===PAGE.sha?"":" ≠ "+esc(PAGE.sha.slice(0,12))}</span><span class="muted"> ${t.from} <code>.squadrant/evidence/${esc(e.sha.slice(0,12))}….json</code></span>`;
+  if(s==="stale") h+=`<p class="muted">${t.staleNote}</p>`;
+  if(s==="missing") h+=`<p class="muted">${t.missingNote}</p>`;
+  if(e&&e.steps) h+=`<table><tr><th>${t.step}</th><th>${t.exit}</th><th>${t.time}</th><th>${t.counts}</th></tr>`+e.steps.map(x=>`<tr><td>${esc(x.name)}${x.required?"":" (optional)"}</td><td>${x.exitCode}</td><td>${(x.durationMs/1000).toFixed(1)}s</td><td>${x.counts?x.counts.ran+"/"+x.counts.skipped+"/"+x.counts.failed:"n/a"}</td></tr>`).join("")+`</table>`;
+  if(e&&e.metaFailures&&e.metaFailures.length) h+=`<ul>`+e.metaFailures.map(m=>`<li class="chip bad">${esc(m.check)}: ${esc(m.message)}</li>`).join("")+`</ul>`;
+  return h+`</div>`;
+}
+function diffHtml(d){return `<pre class="diff">`+d.split("\n").map(l=>`<span class="${l[0]==="+"?"a":l[0]==="-"?"d":l.startsWith("@@")?"h":""}">${esc(l)||" "}</span>`).join("")+`</pre>`;}
+function hunkHtml(h,t){
+  const a=st.ans[h.id]||"";
+  const tests=(h.tests&&h.tests.length)?`<ul>`+h.tests.map(x=>`<li><code>${esc(x)}</code></li>`).join("")+`</ul>`:`<p class="chip warn">${t.noTests}</p>`;
+  return `<div class="card" data-h="${esc(h.id)}">
+    <div><b>${esc(h.id)}</b> <code>${esc(h.file)}:${esc(h.lines)}</code> <span class="muted">@ ${esc(PAGE.sha.slice(0,12))}</span></div>
+    ${diffHtml(h.diff)}
+    <div><b>${t.invariant}:</b> ${esc(h.invariant)}</div>
+    <div><b>${t.tests}:</b>${tests}</div>
+    <div class="q"><b>${t.question}:</b> ${esc(tr(h.question))}
+      <div class="choices">${["ok","concern","note"].map(k=>`<button data-a="${k}" data-id="${esc(h.id)}" aria-pressed="${a===k}">${t[k+"_"]||t.ok_}</button>`).join("")}
+      <button data-ex="${esc(h.id)}">${t.explain}</button></div>
+      <textarea data-note="${esc(h.id)}" placeholder="${t.note}…">${esc(st.note[h.id]||"")}</textarea></div>
+  </div>`;
+}
+function render(){
+  const t=T[st.lang], tier=PAGE.tier;
+  document.documentElement.lang=st.lang;
+  $("#vi").setAttribute("aria-pressed",st.lang==="vi");$("#en").setAttribute("aria-pressed",st.lang==="en");
+  $("#title").textContent=`PR #${PAGE.pr}: ${PAGE.title}`;
+  let h=`<div class="card"><div class="row"><span class="tier ${tier}">${t.tier[tier]}</span><span class="muted">${t.anchors}: <code>${esc(PAGE.sha.slice(0,12))}</code></span></div>
+    <p class="verdict">${t.verdict[tier]}</p>${tier!=="high"?`<p class="muted">${t.verdictSub[tier]}</p>`:""}</div>`;
+  h+=evidenceHtml(t);
+  if(tier==="high"){
+    const n=PAGE.hunks.filter(x=>st.ans[x.id]).length;
+    h+=`<h2>${t.hunks} <span class="muted">(${n}/${PAGE.hunks.length} ${t.done})</span></h2>`+PAGE.hunks.map(x=>hunkHtml(x,t)).join("");
+    h+=`<div class="row"><button class="primary" id="cf">${t.copyF}</button></div>`;
+  }
+  h+=`<h2>${t.files}</h2><div class="card"><ul>`+PAGE.files.map(f=>`<li><code>${esc(f)}</code></li>`).join("")+`</ul></div>`;
+  $("#app").innerHTML=h;
+}
+function findings(){
+  const lines=[`PR #${PAGE.pr} @ ${PAGE.sha.slice(0,12)} (${PAGE.tier})`];
+  PAGE.hunks.forEach(h=>{lines.push(`- ${h.id} ${h.file}:${h.lines}: ${(st.ans[h.id]||"unjudged").toUpperCase()}${st.note[h.id]?" — "+st.note[h.id]:""}`);});
+  return lines.join("\n");
+}
+document.addEventListener("click",ev=>{
+  const b=ev.target.closest("button"); if(!b) return;
+  if(b.id==="vi"||b.id==="en"){st.lang=b.id;try{localStorage.setItem("hrg2.lang",st.lang);}catch(e){}render();return;}
+  if(b.dataset.a){st.ans[b.dataset.id]=b.dataset.a;render();return;}
+  if(b.dataset.ex){const h=PAGE.hunks.find(x=>x.id===b.dataset.ex);copy(T[st.lang].explainPrompt(h,PAGE));return;}
+  if(b.id==="cf"){copy(findings());}
+});
+document.addEventListener("input",ev=>{const n=ev.target.dataset&&ev.target.dataset.note; if(n) st.note[n]=ev.target.value;});
+render();
+</script>
+</body>
+</html>
