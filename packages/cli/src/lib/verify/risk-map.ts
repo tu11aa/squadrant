@@ -69,6 +69,22 @@ export function touchedHigh(map: RiskMap | null, files: string[]): HighTouch[] {
   return out;
 }
 
+export interface InvariantHit {
+  file: string;
+  glob: string;
+  invariant: string;
+}
+
+/** Flat `{ file, glob, invariant }` list for every high entry matching a file. `verify risk` JSON shape. */
+export function listInvariants(map: RiskMap | null, files: string[]): InvariantHit[] {
+  if (!map) return [];
+  return files.flatMap((file) =>
+    matchEntries(map, file)
+      .filter((e) => e.tier === "high")
+      .flatMap((e) => (e.invariants ?? []).map((invariant) => ({ file, glob: e.glob, invariant }))),
+  );
+}
+
 export interface RiskAssessment {
   label: Tier;
   touchedHigh: HighTouch[];

@@ -6,7 +6,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { runVerify, checkEvidence, changedFiles } from "../lib/verify/run.js";
 import { installHook, type HookMode } from "../lib/verify/hook.js";
-import { assessRisk, loadRiskMap } from "../lib/verify/risk-map.js";
+import { assessRisk, loadRiskMap, listInvariants } from "../lib/verify/risk-map.js";
 import { loadVerifyConfig } from "../lib/verify/config.js";
 import { git } from "../lib/verify/evidence.js";
 
@@ -42,7 +42,10 @@ export function verifyCommand(): Command {
     .description("Install a pre-push hook: run = run verify, check = require green evidence for HEAD")
     .requiredOption("--mode <mode>", "run | check")
     .option("--repo <path>", "repo (default: cwd)")
-    .action((opts: { mode: string; repo?: string }) => {
+    // Parent `verify` also declares --repo/--base, and commander gives it those flags even when they follow the
+    // subcommand — read merged opts so `verify install-hook --repo X` / `verify risk --base X --repo Y` work.
+    .action((_opts: unknown, cmd: Command) => {
+      const opts = cmd.optsWithGlobals<{ mode: string; repo?: string }>();
       if (opts.mode !== "run" && opts.mode !== "check") {
         console.error(chalk.red("--mode must be run or check"));
         process.exit(1);
@@ -62,14 +65,16 @@ export function verifyCommand(): Command {
     .description("Print the diff's risk label, touched high-tier invariants and required steps as JSON")
     .option("--base <branch>", "base branch (default: verify.json base or develop)")
     .option("--repo <path>", "repo (default: cwd)")
-    .action((opts: { base?: string; repo?: string }) => {
+    .action((_opts: unknown, cmd: Command) => {
+      const opts = cmd.optsWithGlobals<{ base?: string; repo?: string }>();
       try {
         const repo = toplevel(opts.repo);
         let cfgBase: string | undefined;
         try { cfgBase = loadVerifyConfig(repo).base; } catch { /* risk works without verify.json */ }
         const files = changedFiles(repo, opts.base ?? cfgBase ?? "develop");
-        const r = assessRisk(loadRiskMap(repo), files);
-        console.log(JSON.stringify({ label: r.label, files, invariants: r.touchedHigh, requiredSteps: r.requiredSteps }, null, 2));
+        const map = loadRiskMap(repo);
+        const r = assessRisk(map, files);
+        console.log(JSON.stringify({ label: r.label, files, invariants: listInvariants(map, files), requiredSteps: r.requiredSteps }, null, 2));
       } catch (err) {
         console.error(chalk.red(`verify risk: ${(err as Error).message}`));
         process.exit(1);
