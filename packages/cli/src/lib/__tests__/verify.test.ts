@@ -83,6 +83,14 @@ describe("verify end to end (temp repo)", () => {
     expect(sh(dir, "ls-files", ".squadrant/evidence")).toBe("");
   });
 
+  it("first run leaves a clean tree: ignore rule goes to .git/info/exclude, not .gitignore", () => {
+    const { evidence } = runVerify({ repo: dir, log: quiet });
+    expect(evidence.dirty).toBe(false);
+    expect(sh(dir, "status", "--porcelain")).toBe("");
+    expect(fs.existsSync(path.join(dir, ".gitignore"))).toBe(false);
+    expect(runVerify({ repo: dir, log: quiet }).evidence.dirty).toBe(false);
+  });
+
   it("failing step → red evidence", () => {
     setGate([{ name: "bad", command: "false" }]);
     expect(runVerify({ repo: dir, log: quiet }).evidence.green).toBe(false);

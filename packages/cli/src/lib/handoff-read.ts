@@ -48,7 +48,11 @@ export interface Freshness {
   sessionsToRead: SessionActivity[];
 }
 
-/** A session writes its handoff as its last act; its closing turn lands seconds after `written_at`. Activity within this grace is not "later work". */
+/**
+ * A session writes its handoff as its last act; its closing turn lands seconds after `written_at`.
+ * Activity within this grace is not "later work", but only for a session that started at or before
+ * `written_at` (the writer). A session that started after the handoff has no grace.
+ */
 export const HANDOFF_GRACE_MS = 10 * 60_000;
 
 const localDay = (ms: number): string => {
@@ -81,7 +85,13 @@ export function computeFreshness(
     return { fresh: false, ageDays: null, warning: `no handoff found (live or archived), rebuild state from the readable sessions${note}`, sessionsToRead: recent };
   }
   const ageDays = dayNumber(nowMs) - dayNumber(handoff.writtenAtMs);
-  const later = sessions.filter((s) => s.lastActivityMs > handoff.writtenAtMs + HANDOFF_GRACE_MS).sort(byActivity);
+  const later = sessions
+    .filter((s) => {
+      const startedMs = Date.parse(s.record.startedAt);
+      const startedAfter = !Number.isNaN(startedMs) && startedMs > handoff.writtenAtMs;
+      return s.lastActivityMs > handoff.writtenAtMs + (startedAfter ? 0 : HANDOFF_GRACE_MS);
+    })
+    .sort(byActivity);
   const reasons: string[] = [];
   if (ageDays > 1) reasons.push(`old handoff from ${localDay(handoff.writtenAtMs)} (${ageDays} days ago)`);
   if (later.length > 0) reasons.push(`${later.length} other captain session(s) active after it was written`);
