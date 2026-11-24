@@ -40,6 +40,7 @@ th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}th{col
 .choices{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
 textarea{width:100%;min-height:54px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px;font:inherit;color:var(--text)}
 ul{margin:4px 0;padding-left:20px}
+.ctx dl{margin:0}.ctx dt{font-weight:700;margin-top:8px}.ctx dd{margin:2px 0 0}.ctx details>summary{cursor:pointer;font-weight:700}
 .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.on{opacity:1}
 </style>
@@ -65,7 +66,7 @@ const T = {
     tier:{high:"HIGH risk: human review",med:"MED risk",low:"LOW risk"},
     verdict:{high:"Human review needed: core-logic hunks only.",med:"No human review needed (captain-reviewed).",low:"No human review needed."},
     verdictSub:{med:"Captain review + green local evidence is the gate.",low:"Green local evidence is the gate."},
-    evidence:"Local evidence",from:"read from",ok:"GREEN",red:"RED",stale:"STALE",missing:"MISSING",
+    context:"Context",what:"What this PR is",problem:"Problem it solves",approach:"How it solves it",issues:"Issues",evidence:"Local evidence",from:"read from",ok:"GREEN",red:"RED",stale:"STALE",missing:"MISSING",
     staleNote:"Evidence is for a different SHA than the PR head. Re-run `squadrant verify` before trusting it.",
     missingNote:"No evidence file for the PR head SHA. Run `squadrant verify` first; do not merge on this page alone.",
     step:"step",exit:"exit",time:"time",counts:"ran/skipped/failed",
@@ -79,7 +80,7 @@ const T = {
     tier:{high:"Rủi ro CAO: cần người review",med:"Rủi ro TRUNG BÌNH",low:"Rủi ro THẤP"},
     verdict:{high:"Cần người review: chỉ các hunk logic lõi.",med:"Không cần người review (captain đã review).",low:"Không cần người review."},
     verdictSub:{med:"Cổng kiểm: captain review + evidence local xanh.",low:"Cổng kiểm: evidence local xanh."},
-    evidence:"Evidence local",from:"đọc từ",ok:"XANH",red:"ĐỎ",stale:"CŨ",missing:"THIẾU",
+    context:"Bối cảnh",what:"PR này là gì",problem:"Vấn đề cần giải quyết",approach:"Cách giải quyết",issues:"Issue",evidence:"Evidence local",from:"đọc từ",ok:"XANH",red:"ĐỎ",stale:"CŨ",missing:"THIẾU",
     staleNote:"Evidence thuộc SHA khác với head của PR. Chạy lại `squadrant verify` trước khi tin.",
     missingNote:"Không có file evidence cho SHA head của PR. Chạy `squadrant verify` trước; đừng merge chỉ dựa vào trang này.",
     step:"bước",exit:"exit",time:"thời gian",counts:"chạy/bỏ qua/lỗi",
@@ -100,6 +101,12 @@ function copy(text){
   const done=()=>toast(T[st.lang].copied);
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,()=>fallback());}else fallback();
   function fallback(){const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");done();}catch(e){}ta.remove();}
+}
+function ctxHtml(t){
+  const c=PAGE.context; if(!c) return "";
+  const li=(v)=>{const x=tr(v);return Array.isArray(x)?`<ul>`+x.map(i=>`<li>${esc(i)}</li>`).join("")+`</ul>`:`<p style="margin:2px 0">${esc(x)}</p>`;};
+  const iss=(c.issues&&c.issues.length)?`<dt>${t.issues}</dt><dd>`+c.issues.map(n=>`<span class="chip">#${esc(n)}</span>`).join("")+`</dd>`:"";
+  return `<div class="card ctx"><h2 style="margin-top:0">${t.context}</h2><dl><dt>${t.what}</dt><dd>${li(c.what)}</dd><dt>${t.problem}</dt><dd>${li(c.problem)}</dd><dt>${t.approach}</dt><dd>${li(c.approach)}</dd>${iss}</dl></div>`;
 }
 function evidenceState(){
   const e=PAGE.evidence; if(!e) return "missing";
@@ -140,6 +147,7 @@ function render(){
   $("#title").textContent=`PR #${PAGE.pr}: ${PAGE.title}`;
   let h=`<div class="card"><div class="row"><span class="tier ${tier}">${t.tier[tier]}</span><span class="muted">${t.anchors}: <code>${esc(PAGE.sha.slice(0,12))}</code></span></div>
     <p class="verdict">${t.verdict[tier]}</p>${tier!=="high"?`<p class="muted">${t.verdictSub[tier]}</p>`:""}</div>`;
+  h+=ctxHtml(t);
   h+=evidenceHtml(t);
   if(tier==="high"){
     const n=PAGE.hunks.filter(x=>st.ans[x.id]).length;
