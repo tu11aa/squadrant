@@ -53,10 +53,11 @@ For a PR already merged, point `--base` at `<merge>^1` and `--repo` at a worktre
 5. **Context (all tiers).** Write a `context` block from the PR body, the linked issue(s) and the diff. Never invent facts; if something is unclear, say so in the text:
    - `what`: 1-2 sentences, what this PR is;
    - `problem`: the bug or need, with concrete symptoms (each may be a string or a list of bullets);
+   - `rootCause`: WHY it broke, not the symptom: the exact code or logic at fault, with `file:line` at the PR head SHA, grounded in the diff and the issue. Say which line of the pre-change code was wrong or missing. For a feature PR with no bug write `N/A, new feature`;
    - `approach`: how it solves it, the key design choice and why, and any alternative rejected;
    - `issues`: linked issue/PR numbers.
-   Each of `what`/`problem`/`approach` is `{en, vi}`. Keep it short and scannable. The page shows it first, above the evidence and hunks.
-6. Fill `guide.v2.template.html` by replacing `__PAGE_JSON__` (escape `<` as `<`). Page fields: `pr`, `title`, `sha`, `tier`, `context` (`{what,problem,approach,issues}`), `files`, `evidence` (or `null`), `hunks[{id,file,lines,diff,invariant,tests,question}]`.
+   Each of `what`/`problem`/`rootCause`/`approach` is `{en, vi}`. Keep it short and scannable. The page shows it first, above the evidence and hunks.
+6. Fill `guide.v2.template.html` by replacing `__PAGE_JSON__` (escape `<` as `<`). Page fields: `pr`, `title`, `sha`, `tier`, `context` (`{what,problem,rootCause,approach,issues}`), `files`, `evidence` (or `null`), `hunks[{id,file,lines,diff,invariant,tests,question}]`.
 7. Write it locally and `open` it. Do not post it.
 
 ## Buttons

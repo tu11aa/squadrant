@@ -66,7 +66,7 @@ const T = {
     tier:{high:"HIGH risk: human review",med:"MED risk",low:"LOW risk"},
     verdict:{high:"Human review needed: core-logic hunks only.",med:"No human review needed (captain-reviewed).",low:"No human review needed."},
     verdictSub:{med:"Captain review + green local evidence is the gate.",low:"Green local evidence is the gate."},
-    context:"Context",what:"What this PR is",problem:"Problem it solves",approach:"How it solves it",issues:"Issues",evidence:"Local evidence",from:"read from",ok:"GREEN",red:"RED",stale:"STALE",missing:"MISSING",
+    context:"Context",what:"What this PR is",problem:"Problem it solves",rootCause:"Root cause",approach:"How it solves it",issues:"Issues",evidence:"Local evidence",from:"read from",ok:"GREEN",red:"RED",stale:"STALE",missing:"MISSING",
     staleNote:"Evidence is for a different SHA than the PR head. Re-run `squadrant verify` before trusting it.",
     missingNote:"No evidence file for the PR head SHA. Run `squadrant verify` first; do not merge on this page alone.",
     step:"step",exit:"exit",time:"time",counts:"ran/skipped/failed",
@@ -80,7 +80,7 @@ const T = {
     tier:{high:"Rủi ro CAO: cần người review",med:"Rủi ro TRUNG BÌNH",low:"Rủi ro THẤP"},
     verdict:{high:"Cần người review: chỉ các hunk logic lõi.",med:"Không cần người review (captain đã review).",low:"Không cần người review."},
     verdictSub:{med:"Cổng kiểm: captain review + evidence local xanh.",low:"Cổng kiểm: evidence local xanh."},
-    context:"Bối cảnh",what:"PR này là gì",problem:"Vấn đề cần giải quyết",approach:"Cách giải quyết",issues:"Issue",evidence:"Evidence local",from:"đọc từ",ok:"XANH",red:"ĐỎ",stale:"CŨ",missing:"THIẾU",
+    context:"Bối cảnh",what:"PR này là gì",problem:"Vấn đề cần giải quyết",rootCause:"Nguyên nhân gốc",approach:"Cách giải quyết",issues:"Issue",evidence:"Evidence local",from:"đọc từ",ok:"XANH",red:"ĐỎ",stale:"CŨ",missing:"THIẾU",
     staleNote:"Evidence thuộc SHA khác với head của PR. Chạy lại `squadrant verify` trước khi tin.",
     missingNote:"Không có file evidence cho SHA head của PR. Chạy `squadrant verify` trước; đừng merge chỉ dựa vào trang này.",
     step:"bước",exit:"exit",time:"thời gian",counts:"chạy/bỏ qua/lỗi",
@@ -106,7 +106,7 @@ function ctxHtml(t){
   const c=PAGE.context; if(!c) return "";
   const li=(v)=>{const x=tr(v);return Array.isArray(x)?`<ul>`+x.map(i=>`<li>${esc(i)}</li>`).join("")+`</ul>`:`<p style="margin:2px 0">${esc(x)}</p>`;};
   const iss=(c.issues&&c.issues.length)?`<dt>${t.issues}</dt><dd>`+c.issues.map(n=>`<span class="chip">#${esc(n)}</span>`).join("")+`</dd>`:"";
-  return `<div class="card ctx"><h2 style="margin-top:0">${t.context}</h2><dl><dt>${t.what}</dt><dd>${li(c.what)}</dd><dt>${t.problem}</dt><dd>${li(c.problem)}</dd><dt>${t.approach}</dt><dd>${li(c.approach)}</dd>${iss}</dl></div>`;
+  return `<div class="card ctx"><h2 style="margin-top:0">${t.context}</h2><dl><dt>${t.what}</dt><dd>${li(c.what)}</dd><dt>${t.problem}</dt><dd>${li(c.problem)}</dd>${c.rootCause?`<dt>${t.rootCause}</dt><dd>${li(c.rootCause)}</dd>`:""}<dt>${t.approach}</dt><dd>${li(c.approach)}</dd>${iss}</dl></div>`;
 }
 function evidenceState(){
   const e=PAGE.evidence; if(!e) return "missing";
