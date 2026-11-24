@@ -7,13 +7,16 @@ import { CREW_SIGNAL_TOOLS, callCrewSignalTool, crewSignalToolList } from "../cr
 
 let root: string;
 const saved = { ...process.env };
+const savedCwd = process.cwd();
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-mcp-"));
+  process.chdir(root); // #1136: not a git repo ⇒ the evidence gate is skipped, keeping these tests hermetic
   process.env.SQUADRANT_STATE_DIR = root;
   process.env.SQUADRANT_CREW_TASK_ID = "11111111-aaaa";
   process.env.SQUADRANT_CREW_PROJECT = "proj";
 });
 afterEach(() => {
+  process.chdir(savedCwd);
   process.env = { ...saved };
   fs.rmSync(root, { recursive: true, force: true });
 });
