@@ -47,7 +47,10 @@ For a PR already merged, point `--base` at `<merge>^1` and `--repo` at a worktre
    - otherwise **GREEN**.
 3. **med / low:** `hunks: []`. The page shows the verdict, the evidence table and the file list. Stop.
 4. **high:** for each `invariants[].file`, take the diff of that file and split it per hunk (`git diff -U2 <base> <head> -- <file>`). Only these hunks go on the page. Tests, docs and non-high files appear only in the file list. Per hunk:
-   - `invariant`: the text from `verify risk`, copied verbatim;
+   - `invariant`: the text from `verify risk`, copied verbatim. The page shows it only as a small secondary line "Rule (risk-map)" with a tooltip; it is not the explanation;
+   - `what`: `{en,vi}`, 1-2 plain lines: what this hunk does;
+   - `whyCare`: `{en,vi}`: why a human should look at it and which risk-map rule it touches, in your own plain words, not the rule text copied;
+   - `impact`: list of `{area:{en,vi}, kind, note:{en,vi}}`, `kind` one of `behavior|security|feature|perf|compat`. Find the callers yourself at the PR head SHA, never guess: `git grep -n "<changed symbol>" <sha> -- packages` (exclude `__tests__`), follow wrappers/factories/type re-exports one level, and name the core component or command each caller belongs to (e.g. `crew send`, `side send`, `ping`). For each, say what changes for it. If you cannot find or are unsure of a caller, say so in a note instead of omitting it;
    - `tests`: names of tests that claim to cover it. Search the PR's test diff and the existing test file for `it(...)` names that exercise the changed behaviour, and write `file › describe › it`. If none, leave `[]`; the page flags it as uncovered;
    - `question`: ONE question a machine cannot answer (intent, a contract choice, whether the test checks the right thing), as `{en, vi}`. Ground it in the diff; never ask what lint or tests already prove.
 5. **Context (all tiers).** Write a `context` block from the PR body, the linked issue(s) and the diff. Never invent facts; if something is unclear, say so in the text:
@@ -57,7 +60,7 @@ For a PR already merged, point `--base` at `<merge>^1` and `--repo` at a worktre
    - `approach`: how it solves it, the key design choice and why, and any alternative rejected;
    - `issues`: linked issue/PR numbers.
    Each of `what`/`problem`/`rootCause`/`approach` is `{en, vi}`. Keep it short and scannable. The page shows it first, above the evidence and hunks.
-6. Fill `guide.v2.template.html` by replacing `__PAGE_JSON__` (escape `<` as `<`). Page fields: `pr`, `title`, `sha`, `tier`, `context` (`{what,problem,rootCause,approach,issues}`), `files`, `evidence` (or `null`), `hunks[{id,file,lines,diff,invariant,tests,question}]`.
+6. Fill `guide.v2.template.html` by replacing `__PAGE_JSON__` (escape `<` as `<`). Page fields: `pr`, `title`, `sha`, `tier`, `context` (`{what,problem,rootCause,approach,issues}`), `files`, `evidence` (or `null`), `hunks[{id,file,lines,diff,invariant,what,whyCare,impact,tests,question}]`.
 7. Write it locally and `open` it. Do not post it.
 
 ## Buttons

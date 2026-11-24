@@ -70,7 +70,7 @@ const T = {
     staleNote:"Evidence is for a different SHA than the PR head. Re-run `squadrant verify` before trusting it.",
     missingNote:"No evidence file for the PR head SHA. Run `squadrant verify` first; do not merge on this page alone.",
     step:"step",exit:"exit",time:"time",counts:"ran/skipped/failed",
-    files:"Files in this PR",hunks:"Core-logic hunks",invariant:"Invariant",tests:"Tests that claim to cover it",
+    files:"Files in this PR",hunks:"Core-logic hunks",what:"What this hunk does",whyCare:"Why look at it",impact:"What it affects",rule:"Rule (risk-map)",ruleTip:"A risk-map rule is a line in .squadrant/risk-map.json: a path glob marked high-risk plus the invariant that code must keep. Touching a matching file puts the PR in the high tier.",kind:{behavior:"behavior",security:"security",feature:"feature",perf:"perf",compat:"compat"},invariant:"Invariant",tests:"Tests that claim to cover it",
     noTests:"No test names found. Treat as uncovered.",question:"Only you can judge",ok_:"OK",concern:"Concern",note:"Note",
     explain:"Ask for explainer",copyF:"Copy findings",copied:"Copied",
     explainPrompt:(h,p)=>`Explain hunk ${h.id} (${h.file}:${h.lines}) of PR #${p.pr} @ ${p.sha.slice(0,12)}: what changed, why, and what would break if it were wrong. Invariant: ${h.invariant}`,
@@ -84,7 +84,7 @@ const T = {
     staleNote:"Evidence thuộc SHA khác với head của PR. Chạy lại `squadrant verify` trước khi tin.",
     missingNote:"Không có file evidence cho SHA head của PR. Chạy `squadrant verify` trước; đừng merge chỉ dựa vào trang này.",
     step:"bước",exit:"exit",time:"thời gian",counts:"chạy/bỏ qua/lỗi",
-    files:"File trong PR",hunks:"Hunk logic lõi",invariant:"Bất biến",tests:"Test khẳng định bao phủ",
+    files:"File trong PR",hunks:"Hunk logic lõi",what:"Hunk này làm gì",whyCare:"Vì sao nên xem",impact:"Ảnh hưởng tới",rule:"Rule (risk-map)",ruleTip:"Rule risk-map là một dòng trong .squadrant/risk-map.json: glob đường dẫn được đánh dấu rủi ro cao kèm bất biến mà code đó phải giữ. Sửa file khớp glob sẽ đưa PR vào tier cao.",kind:{behavior:"hành vi",security:"bảo mật",feature:"tính năng",perf:"hiệu năng",compat:"tương thích"},invariant:"Bất biến",tests:"Test khẳng định bao phủ",
     noTests:"Không tìm thấy tên test. Coi như chưa được bao phủ.",question:"Chỉ bạn phán đoán được",ok_:"OK",concern:"Lo ngại",note:"Ghi chú",
     explain:"Nhờ giải thích",copyF:"Copy kết quả",copied:"Đã copy",
     explainPrompt:(h,p)=>`Giải thích hunk ${h.id} (${h.file}:${h.lines}) của PR #${p.pr} @ ${p.sha.slice(0,12)}: đổi gì, vì sao, và sai thì hỏng gì. Bất biến: ${h.invariant}`,
@@ -132,7 +132,10 @@ function hunkHtml(h,t){
   return `<div class="card" data-h="${esc(h.id)}">
     <div><b>${esc(h.id)}</b> <code>${esc(h.file)}:${esc(h.lines)}</code> <span class="muted">@ ${esc(PAGE.sha.slice(0,12))}</span></div>
     ${diffHtml(h.diff)}
-    <div><b>${t.invariant}:</b> ${esc(h.invariant)}</div>
+    ${h.what?`<div><b>${t.what}:</b> ${esc(tr(h.what))}</div>`:""}
+    ${h.whyCare?`<div><b>${t.whyCare}:</b> ${esc(tr(h.whyCare))}</div>`:""}
+    ${(h.impact&&h.impact.length)?`<div><b>${t.impact}:</b><table><tr><th>area</th><th>kind</th><th></th></tr>`+h.impact.map(i=>`<tr><td>${esc(tr(i.area))}</td><td><span class="chip ${i.kind==="security"?"bad":""}">${esc(t.kind[i.kind]||i.kind)}</span></td><td>${esc(tr(i.note))}</td></tr>`).join("")+`</table></div>`:""}
+    <div class="muted rule" style="font-size:12px"><span title="${esc(t.ruleTip)}" style="cursor:help;border-bottom:1px dotted">${t.rule} ⓘ</span>: ${esc(h.invariant)}</div>
     <div><b>${t.tests}:</b>${tests}</div>
     <div class="q"><b>${t.question}:</b> ${esc(tr(h.question))}
       <div class="choices">${["ok","concern","note"].map(k=>`<button data-a="${k}" data-id="${esc(h.id)}" aria-pressed="${a===k}">${t[k+"_"]||t.ok_}</button>`).join("")}
