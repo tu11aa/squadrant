@@ -36,6 +36,7 @@ import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { resolveHookTask } from "./lib/cmux-hook-attribution.js";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
 import { runDaemonUpdateCheck, UPDATE_TICK_MS } from "./lib/daemon-update-notice.js";
+import { runGithubReactorTick, DEFAULT_REACTOR_INTERVAL_MS } from "./lib/github-reactor.js";
 import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -665,8 +666,25 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       updateTick();
       const updateTimer = setInterval(updateTick, UPDATE_TICK_MS);
       updateTimer.unref();
+      // GitHub reactor (opt-in): the timer always runs; each tick re-reads config and no-ops when off.
+      let reactorBusy = false;
+      const reactorTick = async () => {
+        if (reactorBusy) return;
+        reactorBusy = true;
+        try {
+          const cfg = loadConfig();
+          await runGithubReactorTick({
+            stateRoot, config: cfg, log,
+            isOpen: async (p) => !!(await registry.global(cfg).status(cfg.projects[p].captainName)),
+            appendCaptainMessage: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+          });
+        } catch (e) { log(`github-reactor tick failed: ${(e as Error).message}`); }
+        finally { reactorBusy = false; }
+      };
+      const reactorTimer = setInterval(() => void reactorTick(), Math.max(30_000, loadConfig().githubReactor?.intervalMs ?? DEFAULT_REACTOR_INTERVAL_MS));
+      reactorTimer.unref();
       const stopWithTimer = h.stop.bind(h);
-      h.stop = async (reason?: string) => { clearInterval(updateTimer); return stopWithTimer(reason); };
+      h.stop = async (reason?: string) => { clearInterval(updateTimer); clearInterval(reactorTimer); return stopWithTimer(reason); };
     } catch (e) {
       log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);
     }

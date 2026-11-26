@@ -1061,6 +1061,18 @@ Every notice points at `squadrant update`. A dev or linked checkout gets the sam
 
 `--check` only reports current, latest, level, reason and minSafe. `--dry-run` prints the commands without running them (the refusals still apply).
 
+## GitHub reactor (opt-in)
+
+The daemon can watch each **open project's** pull requests (authored by the `gh` user, via `gh pr list --author @me` run in the project path) and tell that project's captain when one is **merged / closed**, gets **merge conflicts**, or gets **new comments** (issue comments, reviews, inline review comments; your own are skipped). Off by default; read every tick, so toggling needs no daemon restart.
+
+```json
+{ "githubReactor": { "enabled": true, "intervalMs": 120000 } }
+```
+
+- **Initial state.** The first tick for a project records a baseline in `<stateRoot>/github-reactor/<project>.json` (per PR: last known mergeable state + every existing comment id) and notifies nothing. A PR first seen later is adopted silently the same way. Only later differences are reported.
+- **Exactly-once.** State advances only after the captain message is enqueued (mailbox, `source: daemon`), so a failed send retries next tick. `UNKNOWN` mergeability is ignored until GitHub computes it; a conflict is reported once per transition.
+- **Scope.** Only projects whose captain is up are polled; `gh` failures (offline, no remote) are logged and skipped per project. Code: `packages/cli/src/lib/github-reactor.ts`.
+
 ## Captain rollover (#1010)
 
 `/squadrant:rollover` (alias `/squadrant:roll`) is a captain skill for Claude captains whose context is filling. In order, the captain writes a consolidated handoff (`write-handoff.sh`: current handoff read first, verified-done items dropped, duplicates merged, open items and decisions kept; `write-handoff.sh` warns on stderr if an existing `[thread <id>]` decision is missing from the new content), writes the daily log, runs `squadrant captain compact <project>` as its last action and ends the turn. The operator types it once.
