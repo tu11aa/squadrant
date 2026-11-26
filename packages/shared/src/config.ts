@@ -277,6 +277,8 @@ export interface SquadrantConfig {
   telegram?: TelegramConfig;
   /** #1112 status observer. Absent ⇒ enabled with the defaults below. */
   status?: StatusConfig;
+  /** GitHub reactor: poll open PRs per open project and tell the captain about merge / conflict / new comments. Absent or enabled≠true ⇒ off. Read every tick, so toggling needs no restart. */
+  githubReactor?: { enabled?: boolean; intervalMs?: number };
   projection?: {
     targets?: string[];
   };
