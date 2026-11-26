@@ -24,7 +24,7 @@ import {
   launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
   readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
   discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments, roleEnvPrefix,
-  decideOpencodeGateWrap, buildOpencodeGateRunCommand,
+  decideOpencodeGateWrap, buildOpencodeGateRunCommand, shellQuote,
   type CaptainAddress, type CaptainRouteSetup,
 } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
@@ -252,6 +252,10 @@ export const launchCommand = new Command("launch")
       } else if (role === "command") {
         initialPrompt = "Run your startup checklist: use the squadrant:command-ops skill, complete your daily briefing, then report ready.";
       }
+      // #1102: claude takes the startup prompt as its launch positional, like crews and side
+      // sessions — a real first turn with nothing typed into the pane. Typing it raced Claude
+      // Code's paste window: the Enter landed as a newline and the captain sat idle.
+      const launchArgPrompt = agentName === "claude" ? initialPrompt : undefined;
 
       const runtime = projectName
         ? runtimes.forProject(projectName, config)
@@ -373,7 +377,7 @@ export const launchCommand = new Command("launch")
               resolveCaptainSessionName(agentName, projectName),
               thinking,
               captainBoot,
-              route?.settingsPath);
+              route?.settingsPath) + (launchArgPrompt ? ` ${shellQuote(launchArgPrompt)}` : "");
             // #828 P6-C phase 2: gate on + engine=auto-gate + credential present
             // ⇒ launch the opencode captain through the package's opencode
             // adapter instead of the bare command above (decision computed
@@ -394,7 +398,7 @@ export const launchCommand = new Command("launch")
               ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${cmd}`
               : cmd;
           },
-          initialPrompt,
+          initialPrompt: launchArgPrompt ? undefined : initialPrompt,
           runtime,
           navigate,
           pinToTop,
