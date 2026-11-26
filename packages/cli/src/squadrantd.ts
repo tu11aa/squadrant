@@ -11,7 +11,7 @@ import { startDaemon } from "@squadrant/core";
 import { shellQuote } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
 import { captainTranscriptPath } from "./lib/captain-context.js";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
+import { appendCaptainMessage, readCursor, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -666,7 +666,18 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       updateTick();
       const updateTimer = setInterval(updateTick, UPDATE_TICK_MS);
       updateTimer.unref();
-      // GitHub reactor (opt-in): the timer always runs; each tick re-reads config and no-ops when off.
+      const stopWithTimer = h.stop.bind(h);
+      h.stop = async (reason?: string) => { clearInterval(updateTimer); return stopWithTimer(reason); };
+    } catch (e) {
+      log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);
+    }
+  }
+
+  // GitHub reactor (opt-in): own setup so a failure in the restart-broadcast block above can't
+  // stop it. The timer always runs; each tick re-reads config and no-ops when off (intervalMs is read here, once).
+  if (!process.env.VITEST) {
+    try {
+      const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       let reactorBusy = false;
       const reactorTick = async () => {
         if (reactorBusy) return;
@@ -677,16 +688,17 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
             stateRoot, config: cfg, log,
             isOpen: async (p) => !!(await registry.global(cfg).status(cfg.projects[p].captainName)),
             appendCaptainMessage: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+            isDelivered: async (project, seq) => ((await readCursor({ stateRoot, project, subscriber: "captain" }))?.lastAckedSeq ?? 0) >= seq,
           });
         } catch (e) { log(`github-reactor tick failed: ${(e as Error).message}`); }
         finally { reactorBusy = false; }
       };
       const reactorTimer = setInterval(() => void reactorTick(), Math.max(30_000, loadConfig().githubReactor?.intervalMs ?? DEFAULT_REACTOR_INTERVAL_MS));
       reactorTimer.unref();
-      const stopWithTimer = h.stop.bind(h);
-      h.stop = async (reason?: string) => { clearInterval(updateTimer); clearInterval(reactorTimer); return stopWithTimer(reason); };
+      const stopWithReactor = h.stop.bind(h);
+      h.stop = async (reason?: string) => { clearInterval(reactorTimer); return stopWithReactor(reason); };
     } catch (e) {
-      log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);
+      log(`github-reactor setup failed: ${(e as Error).message}`);
     }
   }
 

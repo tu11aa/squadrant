@@ -34,7 +34,12 @@ export interface TrackedPr {
   mergeable: string;
   seenComments: string[];
 }
-export interface ProjectState { initializedAt: string; prs: Record<string, TrackedPr> }
+export interface ProjectState {
+  initializedAt: string;
+  prs: Record<string, TrackedPr>;
+  /** Mailbox seq of the last reactor message; while it is undelivered nothing new is sent. */
+  pendingSeq?: number;
+}
 
 export type PrFinal = { state: "MERGED"; by?: string; at?: string; base?: string } | { state: "CLOSED"; at?: string };
 
@@ -46,8 +51,7 @@ export function diffProject(
   me?: string,
 ): { lines: string[]; next: ProjectState } {
   const lines: string[] = [];
-  const next: ProjectState = { initializedAt: prev.initializedAt, prs: {} };
-  const openNums = new Set(open.map((p) => String(p.number)));
+  const next: ProjectState = { initializedAt: prev.initializedAt, prs: {} };  const openNums = new Set(open.map((p) => String(p.number)));
 
   for (const [num, tracked] of Object.entries(prev.prs)) {
     if (openNums.has(num)) continue;
@@ -73,9 +77,13 @@ export function diffProject(
       lines.push(`⚠️ PR #${key} now has MERGE CONFLICTS with its base — ${pr.title} (${pr.url})`);
     }
     const seen = new Set(old.seenComments);
+    const hasInline = Object.values(pr.comments).some((c) => c.kind === "inline");
     for (const [id, c] of Object.entries(pr.comments)) {
       if (seen.has(id)) continue;
       if (me && c.author === me) { seen.add(id); continue; }
+      // A review submitted with only inline comments arrives as an empty COMMENTED review plus one line per
+      // inline comment; the review line adds nothing, so skip it (APPROVED / CHANGES_REQUESTED / bodies stay).
+      if (c.kind === "review" && c.state === "COMMENTED" && !c.body.trim() && hasInline) { seen.add(id); continue; }
       const snippet = c.body.replace(/\s+/g, " ").trim().slice(0, 240);
       const what = c.kind === "review" ? `review${c.state ? ` (${c.state})` : ""}` : c.kind === "inline" ? "inline review comment" : "comment";
       lines.push(`💬 PR #${key} new ${what} from @${c.author}${snippet ? `: "${snippet}"` : ""} (${c.url})`);
@@ -149,7 +157,10 @@ export interface ReactorOpts {
   config: SquadrantConfig;
   /** True when the project's captain is up (only open projects are polled). */
   isOpen: (project: string) => Promise<boolean>;
-  appendCaptainMessage: (project: string, text: string) => Promise<void | number>;
+  /** Returns the mailbox seq of the enqueued entry. */
+  appendCaptainMessage: (project: string, text: string) => Promise<number>;
+  /** True once the captain delivery cursor has acked `seq` (the message reached the captain). */
+  isDelivered: (project: string, seq: number) => Promise<boolean>;
   api?: GhApi;
   log?: (m: string) => void;
   now?: () => Date;
@@ -171,8 +182,13 @@ export async function runGithubReactorTick(opts: ReactorOpts): Promise<void> {
   for (const [project, proj] of Object.entries(opts.config.projects)) {
     try {
       if (!(await opts.isOpen(project))) continue;
+      if (!fs.existsSync(proj.path)) throw new Error(`project path not found: ${proj.path}`);
+      const prev0 = readProjectState(opts.stateRoot, project);
+      // At most one pending reactor message per project: wait until the captain took the last one,
+      // then the next poll reports everything since in a single message.
+      if (prev0?.pendingSeq !== undefined && !(await opts.isDelivered(project, prev0.pendingSeq))) continue;
       const open = await api.listOpen(proj.path);
-      const prev = readProjectState(opts.stateRoot, project);
+      const prev = prev0;
       if (!prev) {
         // Baseline: record everything currently true, notify nothing.
         const prs: Record<string, TrackedPr> = {};
@@ -188,7 +204,7 @@ export async function runGithubReactorTick(opts: ReactorOpts): Promise<void> {
       }
       const { lines, next } = diffProject(prev, open, finals, me);
       if (lines.length > 0) {
-        await opts.appendCaptainMessage(project, `GitHub update for ${project}:\n${lines.join("\n")}`);
+        next.pendingSeq = await opts.appendCaptainMessage(project, `GitHub update for ${project}:\n${lines.join("\n")}`);
       }
       writeProjectState(opts.stateRoot, project, next); // only after a successful send
     } catch (e) {
