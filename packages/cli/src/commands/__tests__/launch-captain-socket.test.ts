@@ -16,11 +16,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const buildAgentCmdMock = vi.hoisted(() => vi.fn(() => ({ agentName: "claude", cmd: ["claude"], env: {} })));
+const buildAgentCmdMock = vi.hoisted(() => vi.fn(() => "claude"));
 const captainEnv = vi.hoisted(() => ({ value: undefined as Record<string, string> | undefined }));
+const captainAgent = vi.hoisted(() => ({ value: "claude" }));
 const launchedCmds = vi.hoisted(() => [] as unknown[]);
 const launchOneWorkspaceMock = vi.hoisted(() =>
-  vi.fn(async (opts: { agentCmdFactory: (forceFresh: boolean) => unknown }) => {
+  vi.fn(async (opts: { agentCmdFactory: (forceFresh: boolean) => unknown; initialPrompt?: string }) => {
     launchedCmds.push(opts.agentCmdFactory(false));
   }),
 );
@@ -67,6 +68,7 @@ vi.mock("@squadrant/core", () => ({
     return `/tmp/cc-socks/squadrant-captain-${project}.sock`;
   },
   deliverStartupPrompt: vi.fn(),
+  shellQuote: (p: string) => "'" + p.replace(/'/g, "'\\''") + "'",
   // #786: launch.ts now imports these from @squadrant/core.
   readCaptainAddress: vi.fn(() => null),
   writeCaptainAddress: vi.fn(),
@@ -94,7 +96,7 @@ vi.mock("@squadrant/shared", async () => {
         alpha: { captainName: "alpha-captain", path: "/tmp/alpha", spokeVault: "/tmp/alpha/.spoke" },
         beta: { captainName: "beta-captain", path: "/tmp/beta", spokeVault: "/tmp/beta/.spoke" },
       },
-      defaults: { captainChannel: "on", permissions: {}, roles: captainEnv.value ? { captain: { agent: "claude", env: captainEnv.value } } : {}, models: {} },
+      defaults: { captainChannel: "on", permissions: {}, roles: captainEnv.value ? { captain: { agent: captainAgent.value, env: captainEnv.value } } : { captain: { agent: captainAgent.value } }, models: {} },
     }),
     resolveHome: (p: string) => p,
     ensureWorkspace: vi.fn(),
@@ -112,6 +114,29 @@ describe("launchCommand --all (#706 per-project captain socket wiring)", () => {
     launchOneWorkspaceMock.mockClear();
     launchedCmds.length = 0;
     captainEnv.value = undefined;
+    captainAgent.value = "claude";
+  });
+
+  // #1102: typing the startup prompt into the pane raced Claude Code's paste window — the Enter
+  // landed as a newline and the captain sat idle. Claude takes it as a launch-time positional
+  // instead (as crews and side sessions do); other agents keep the pane delivery.
+  it("hands a claude captain its startup prompt as the last launch arg and types nothing into the pane", async () => {
+    const { launchCommand } = await import("../launch.js");
+    await launchCommand.parseAsync(["node", "squadrant", "launch", "--all"]);
+    expect(launchedCmds).toHaveLength(2);
+    for (const c of launchedCmds) {
+      expect(String(c)).toMatch(/^claude 'Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready\.'$/);
+    }
+    expect(launchOneWorkspaceMock.mock.calls.every(([o]) => o.initialPrompt === undefined)).toBe(true);
+  });
+
+  it("keeps the pane-delivered startup prompt for a non-claude captain", async () => {
+    captainAgent.value = "codex";
+    const { launchCommand } = await import("../launch.js");
+    await launchCommand.parseAsync(["node", "squadrant", "launch", "--all"]);
+    expect(launchedCmds.every((c) => String(c) === "claude")).toBe(true);
+    expect(launchOneWorkspaceMock.mock.calls.length).toBe(2);
+    expect(launchOneWorkspaceMock.mock.calls.every(([o]) => o.initialPrompt?.startsWith("Run your startup checklist"))).toBe(true);
   });
 
   it("#1143: prefixes the captain launch command with roles.captain.env, and leaves it alone when absent", async () => {

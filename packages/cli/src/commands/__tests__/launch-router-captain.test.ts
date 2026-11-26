@@ -213,7 +213,8 @@ describe("router-backed captain launch (#772)", () => {
     }
     const cmd = await runLaunchAndGetCmd();
 
-    expect(cmd).toBe("claude --permission-mode auto");
+    // #1102: the startup prompt rides as claude's last launch arg.
+    expect(cmd).toBe(`claude --permission-mode auto 'Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready.'`);
     expect(cmd).not.toContain("SQUADRANT_GATE");
     expect(cmd).not.toContain("--settings");
     expect(buildAgentCmdMock).toHaveBeenCalledWith(
