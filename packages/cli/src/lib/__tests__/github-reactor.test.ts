@@ -40,6 +40,16 @@ describe("diffProject", () => {
     expect(r.lines[0]).toMatch(/CONFLICTS/);
     expect(diffProject(r.next, [pr({ mergeable: "CONFLICTING" })], {}).lines).toHaveLength(0);
   });
+  it("reports a conflict only on a known MERGEABLE -> CONFLICTING transition", () => {
+    const unknown = { initializedAt: "x", prs: { "7": { title: "t", url: "u7", mergeable: "UNKNOWN", seenComments: [] as string[] } } };
+    const a = diffProject(unknown, [pr({ mergeable: "CONFLICTING" })], {});
+    expect(a.lines).toHaveLength(0);                       // baseline/adopted UNKNOWN, first known value is silent
+    expect(a.next.prs["7"].mergeable).toBe("CONFLICTING");
+    expect(diffProject(prev, [pr({ mergeable: "CONFLICTING" })], {}).lines).toHaveLength(1);
+    const adopted = diffProject({ initializedAt: "x", prs: {} }, [pr({ mergeable: "UNKNOWN" })], {});
+    expect(adopted.next.prs["7"].mergeable).toBe("UNKNOWN");
+    expect(diffProject(adopted.next, [pr({ mergeable: "CONFLICTING" })], {}).lines).toHaveLength(0);
+  });
   it("reports merged and drops the PR; keeps tracking when state is unknown", () => {
     const r = diffProject(prev, [], { "7": { state: "MERGED", by: "tu", base: "develop" } });
     expect(r.lines[0]).toMatch(/MERGED into develop by tu/);

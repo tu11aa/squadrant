@@ -51,7 +51,8 @@ export function diffProject(
   me?: string,
 ): { lines: string[]; next: ProjectState } {
   const lines: string[] = [];
-  const next: ProjectState = { initializedAt: prev.initializedAt, prs: {} };  const openNums = new Set(open.map((p) => String(p.number)));
+  const next: ProjectState = { initializedAt: prev.initializedAt, prs: {} };
+  const openNums = new Set(open.map((p) => String(p.number)));
 
   for (const [num, tracked] of Object.entries(prev.prs)) {
     if (openNums.has(num)) continue;
@@ -73,7 +74,8 @@ export function diffProject(
       continue;
     }
     const mergeable = pr.mergeable === "UNKNOWN" ? old.mergeable : pr.mergeable;
-    if (mergeable === "CONFLICTING" && old.mergeable !== "CONFLICTING") {
+    // Only a known MERGEABLE -> CONFLICTING transition is news; from UNKNOWN/missing we adopt the first known value silently.
+    if (mergeable === "CONFLICTING" && old.mergeable === "MERGEABLE") {
       lines.push(`⚠️ PR #${key} now has MERGE CONFLICTS with its base — ${pr.title} (${pr.url})`);
     }
     const seen = new Set(old.seenComments);
