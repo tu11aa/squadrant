@@ -29,9 +29,10 @@ On CREW REVIEW or CREW DONE:
    - `squadrant knowledge surfaced --task <task-id>` lists the rules delivered to that task (task id from `squadrant crew tasks <project>`).
    - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
    - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
-4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-5. **Operator about to review by hand** ("review guide", "how should I review these PRs")? Use the `squadrant:human-review-guide` skill: one PR → chat answer, several → one local interactive HTML. You write it yourself (you hold the context), and it is never posted anywhere.
-6. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+4. **Evidence SHA = branch head, before any merge ask** (#1136). If the repo has `.squadrant/verify.json`, compare the crew branch head (`git -C <worktree> rev-parse HEAD`, or the PR head SHA) with the evidence file: `.squadrant/evidence/<head>.json` must exist in the crew worktree with `green: true` and no `metaFailures`. MISSING, STALE (evidence is for an older commit) or RED means do not ask the operator to merge: `squadrant crew send` the crew to run `squadrant verify` at HEAD and re-signal, or run it yourself. State the evidence SHA in the merge ask. The crew's signal already enforces this per the `verifyGate` policy (`off|warn|refuse`), but under `warn` or `off` the captain check is the gate. This complements, and does not replace, your own e2e before the merge ask.
+5. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
+6. **Operator about to review by hand** ("review guide", "how should I review these PRs")? Use the `squadrant:human-review-guide` skill: one PR → chat answer, several → one local interactive HTML. You write it yourself (you hold the context), and it is never posted anywhere.
+7. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 

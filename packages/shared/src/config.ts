@@ -144,6 +144,9 @@ export interface GateConfig {
   deny?: string[];
 }
 
+/** #1136: what `crew signal done|review` does when green verify evidence for HEAD is absent. */
+export type VerifyGatePolicy = "off" | "warn" | "refuse";
+
 export interface CrewRoutingConfig {
   rules: CrewRoutingRule[];
 }
@@ -309,6 +312,8 @@ export interface SquadrantConfig {
     taskTimeoutMs?: number;
     /** #649: notify the captain when a crew has been held by the operator longer than this. Default: 6h. */
     takeoverNudgeHours?: number;
+    /** #1136: crew `signal done|review` evidence gate — off | warn | refuse. Default: warn. Per-project override in projects/<name>.json. */
+    verifyGate?: VerifyGatePolicy;
     /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
     crewRouting?: CrewRoutingConfig;
     /** B1: consume cmux's native event stream for crew turn-end (idle) detection
