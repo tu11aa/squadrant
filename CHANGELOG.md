@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-27
+
+Verification and awareness. `squadrant verify` gives a local, SHA-keyed green gate that crews must pass before signaling done, captains read the handoff through one reader that says whether it is still fresh, and an opt-in GitHub reactor tells captains when their PRs merge, conflict or get comments. PRs #1156, #1158–#1166, #1170, #1174.
+
+**Upgrade:** run `squadrant update` (installs, restarts the daemon on the new code and lists the captains to relaunch), then relaunch captains to pick up the new templates and startup prompt delivery. Crews pick up the new templates on their next spawn.
+
+### Added
+
+- **`squadrant verify`.** Runs the steps in `.squadrant/verify.json`, writes evidence to `.squadrant/evidence/<HEAD sha>.json` (plus a `.md` summary) and exits non-zero on a failed required step or meta-check: an all-skipped db/integration step, an assertion changed in a high-tier spec without a `test-change:` note, and the touched high-tier invariants are always listed. `squadrant verify install-hook --mode run|check` installs a `pre-push` gate (an existing hook is chained). The evidence directory is ignored through `.git/info/exclude`, so a first run leaves the tree clean (#1136, #1158, #1162).
+- **Risk map.** `.squadrant/risk-map.json` assigns globs a tier (`high`/`med`/`low`) with invariants and required steps; `squadrant verify risk [--base] [--repo]` prints the label, files, invariants and required steps as JSON, and evidence records the risk label. A touched high entry's required steps must exist in `verify.json` (#1136, #1160, #1163).
+- **Crew signal evidence gate.** `crew signal done|review` (CLI and the `squadrant mcp` tools, so every agent) checks the verify evidence for HEAD: GREEN, RED, STALE or MISSING. Policy `verifyGate: off | warn | refuse` (default `warn`) in `defaults.verifyGate`, overridable per project; repos without `verify.json` are skipped, `blocked`/`failed` are never gated. Crew templates run `squadrant verify` before signaling, and the captain review gate checks evidence SHA = branch head before a merge ask (#1136, #1165).
+- **`squadrant handoff read <project> [--keep]`.** One reader for the captain handoff: falls back from the live file to the newest archive and returns a freshness verdict (age, source, and the sessions that ran after the handoff was written and must be read when it is stale). `read-handoff.sh` is now a shim over it (#1155, #1156, #1162).
+- **GitHub reactor (opt-in).** With `githubReactor: { "enabled": true }` the daemon polls each project's open PRs by the operator (default every 120 s) and tells the captain once when a PR is merged or closed, gets merge conflicts (only on a known mergeable → conflicting change) or gets new comments or reviews. The first poll is a silent baseline; changes while the daemon or captain was down are reported once on the next poll; at most one undelivered reactor message per project, later changes are folded into the next one. State: `<stateRoot>/github-reactor/<project>.json` (#1170).
+- **Human review guide v2** under `plugin/skills/human-review-guide/v2/`: review effort follows the risk tier and shows the verify evidence (#1136, #1164).
+
+### Fixed
+
+- **Idle crews stay idle.** Claude's `idle_prompt` notification (and other notifications that are not a permission or input request) no longer counts as crew activity. It used to flip an idle crew back to `working` a minute after its turn ended, so `crew list` showed it working and a queued `crew compact` timed out after 10 minutes (#1173, #1174).
+- **Captain startup prompt is a launch arg.** Claude captains and command sessions get the startup prompt as the first turn of the `claude` launch command instead of having it typed into the pane, so a parallel `launch --all` can no longer leave the prompt stuck in the input box (#1102, #1166).
+
 ## [0.38.1] - 2026-11-19
 
 Updating. squadrant can now say how important a release is, and update itself: `squadrant update` installs the new version, restarts the daemon on it and lists the captains to relaunch. PRs #1151, #1152.
