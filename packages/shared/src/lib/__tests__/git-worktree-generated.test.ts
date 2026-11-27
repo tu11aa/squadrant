@@ -24,8 +24,18 @@ function write(root: string, rel: string, body = "{}\n"): void {
   fs.writeFileSync(path.join(root, rel), body);
 }
 
+// Hermetic: a machine-global excludesFile (e.g. ignoring .claude/settings.local.json)
+// must not leak into the temp repos, for both the test's git calls and the code under test.
+// (git also reads $XDG_CONFIG_HOME/git/ignore, so that is redirected too.)
+const ENV_KEYS = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "XDG_CONFIG_HOME"] as const;
+const savedEnv: Record<string, string | undefined> = {};
+
 beforeEach(() => {
+  for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "sq-gen-"));
+  process.env.XDG_CONFIG_HOME = path.join(tmp, "xdg-empty");
   repo = path.join(tmp, "repo");
   fs.mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
@@ -38,7 +48,13 @@ beforeEach(() => {
   git(repo, "worktree", "add", "-q", "-b", "crew/x", wt);
 });
 
-afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+afterEach(() => {
+  for (const k of ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
 
 describe("squadrant-generated worktree files (#889)", () => {
   it("untracked generated file alone is not dirty; removal then succeeds without --force", () => {

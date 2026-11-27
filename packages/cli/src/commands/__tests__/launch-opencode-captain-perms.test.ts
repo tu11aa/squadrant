@@ -69,6 +69,7 @@ vi.mock("@squadrant/core", () => ({
   ensureSocksDir: vi.fn(),
   captainSocketPath: (project: string) => `/tmp/cc-socks/squadrant-captain-${project}.sock`,
   deliverStartupPrompt: vi.fn(),
+  shellQuote: (p: string) => "'" + p.replace(/'/g, "'\\''") + "'",
   readCaptainAddress: vi.fn(() => null),
   writeCaptainAddress: vi.fn(),
   realpathOrSelf: (p: string) => p,
@@ -148,6 +149,7 @@ describe("opencode captain permission auto-approval (CLI edge)", () => {
     hoisted.roleAgent = "claude";
     const cmd = await runLaunchAndGetCmd();
     expect(cmd).not.toContain("OPENCODE_CONFIG");
-    expect(cmd).toBe("claude --permission-mode auto");
+    // #1102: the startup prompt rides as claude's last launch arg.
+    expect(cmd).toBe(`claude --permission-mode auto 'Run your startup checklist: use the squadrant:captain-startup skill, complete all startup steps, then report ready.'`);
   });
 });

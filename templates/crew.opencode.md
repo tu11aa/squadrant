@@ -38,6 +38,7 @@ Before signaling done, TERMINATE every process you started — test runners, dev
 Your captain learns you are done from an **explicit signal**, not from your CLI exiting. When you are actually finished:
 
 1. Commit your work.
+   If the repo has `.squadrant/verify.json`, run `squadrant verify` at that commit (it must exit 0) before signaling done or review; if verify rewrites tracked files, commit and re-run it, so the evidence SHA equals HEAD. The signal checks this (policy `verifyGate`: off|warn|refuse).
 2. Verify the worktree is settled (`git status` clean).
 3. Signal done: use the `crew_signal_done` tool from the `squadrant` MCP server if your agent has `squadrant mcp` registered (preferred; pass `message`), otherwise run **`squadrant crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the squadrant daemon so the captain sees terminal state without scraping your pane.
    If you applied any knowledge-base rules, end the message with `Rules: <id>, <id>` (leave it out when none applied). The signal records those ids as citations, and it also picks up rule ids named in your branch's commit messages.

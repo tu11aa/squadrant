@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ModelRoutingConfig, ContextBudget } from "./config.js";
+import type { ModelRoutingConfig, ContextBudget, VerifyGatePolicy } from "./config.js";
 import { DEFAULT_CONTEXT_BUDGET } from "./config.js";
 import { readConfigFileSync, writeConfigFileSync } from "./lib/config-io.js";
 
@@ -26,6 +26,8 @@ export interface ProjectOverrideConfig {
   models?: Partial<ModelRoutingConfig>;
   /** #1015 per-project context thresholds. */
   contextBudget?: Partial<ContextBudget>;
+  /** #1136: per-project override of defaults.verifyGate. */
+  verifyGate?: VerifyGatePolicy;
 }
 
 function defaultRoot(): string {
@@ -112,4 +114,14 @@ export function resolveContextBudget(
     }
   }
   return out;
+}
+
+export const DEFAULT_VERIFY_GATE: VerifyGatePolicy = "warn";
+
+/** #1136: built-in (warn) → global defaults.verifyGate → projects/<name>.json. An invalid value is ignored, never silently "off". */
+export function resolveVerifyGate(globalPolicy: unknown, override: ProjectOverrideConfig): VerifyGatePolicy {
+  const ok = (v: unknown): v is VerifyGatePolicy => v === "off" || v === "warn" || v === "refuse";
+  if (ok(override.verifyGate)) return override.verifyGate;
+  if (ok(globalPolicy)) return globalPolicy;
+  return DEFAULT_VERIFY_GATE;
 }

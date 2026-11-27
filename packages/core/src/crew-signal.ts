@@ -8,6 +8,7 @@ import { appendCaptainMessage } from "./mailbox.js";
 import type { ControlEvent, TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES, stateRoot } from "@squadrant/shared";
 import { scanCitations, readBranchOnlyMessages, type CiteText } from "./knowledge/cite.js";
+import { applyEvidenceGate } from "./evidence-gate.js";
 import type { AuditSink } from "./knowledge/audit.js";
 
 export type CrewSignalState = "done" | "blocked" | "failed" | "review";
@@ -246,7 +247,11 @@ export async function performCrewSignal(
   o: { message?: string; question?: string; error?: string; taskId?: string; project?: string },
   deps: { call: (req: unknown) => Promise<unknown> },
 ): Promise<string> {
+  // #1136: done/review need green verify evidence for HEAD (policy off|warn|refuse). Refusal happens before any
+  // event is emitted; the crew keeps working and re-signals once `squadrant verify` is green at HEAD.
+  const gate = applyEvidenceGate(signal, { project: o.project ?? process.env.SQUADRANT_CREW_PROJECT });
+  if (gate.refuse) throw new Error(gate.refuse);
   await runCrewSignal(signal, { ...o, writeResult: defaultWriteResult }, deps);
   logSignalCitations(signal, o);
-  return signalConfirmation(signal, o.project ?? process.env.SQUADRANT_CREW_PROJECT ?? "", o.taskId ?? process.env.SQUADRANT_CREW_TASK_ID ?? "");
+  return (gate.warn ? `${gate.warn}\n` : "") + signalConfirmation(signal, o.project ?? process.env.SQUADRANT_CREW_PROJECT ?? "", o.taskId ?? process.env.SQUADRANT_CREW_TASK_ID ?? "");
 }
