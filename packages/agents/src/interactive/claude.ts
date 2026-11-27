@@ -439,7 +439,7 @@ function logStopPermissionMode(payload: unknown, taskId: string): void {
  */
 export function classifyNotification(
   payload: unknown,
-): { kind: "blocked" | "input-requested" | "progress"; question?: string } {
+): { kind: "blocked" | "input-requested" | "progress" | "ignore"; question?: string } {
   const p = payload as { message?: unknown; notification_type?: unknown } | null | undefined;
   const msg = typeof p?.message === "string" ? p.message : "";
   const notificationType = typeof p?.notification_type === "string" ? p.notification_type : null;
@@ -452,9 +452,12 @@ export function classifyNotification(
   }
   if (notificationType != null) {
     // idle_prompt, quota_auto_resume_*, auth_success, agent_completed,
-    // elicitation_*, push_notification, computer_use_* — liveness only.
-    // squadrant has no dedicated source for quota/auth state yet (#760).
-    return { kind: "progress" };
+    // elicitation_*, push_notification, computer_use_* — not a permission or
+    // input request, so no event (#1173). Mapping these to task.progress made
+    // the reducer resume an idle (awaiting-input) crew to working ~60s after
+    // its turn ended (idle_prompt), which stalled `crew compact`. Liveness
+    // is carried by the tool/turn hooks; an idle notification adds none.
+    return { kind: "ignore" };
   }
   if (msg && isPermissionNotification(msg)) {
     return { kind: "blocked", question: msg };
@@ -558,7 +561,8 @@ export function redactApiError(error: unknown): string {
  * fallback for opencode crews and as a safety net; both may fire task.blocked for
  * the same prompt, but the state-machine idempotency (already-blocked → no-op,
  * from #176) deduplicates. All other notification_type values (idle_prompt,
- * quota_auto_resume_*, etc.) and payloads missing notification_type entirely
+ * quota_auto_resume_*, etc.) → null, no event (#1173: task.progress would
+ * resume an idle crew to working). Payloads missing notification_type entirely
  * (older clients, falls back to the isPermissionNotification substring test) →
  * task.progress. Missing/non-string message → task.progress (never throws, hook
  * must exit 0).
@@ -647,6 +651,7 @@ export function mapClaudeHookToEvent(
       if (cls.kind === "input-requested") {
         return { type: "task.input.requested", id: taskId, requestId: nextHookRequestId++, question: cls.question! };
       }
+      if (cls.kind === "ignore") return null;
       return { type: "task.progress", id: taskId, note: "notification" };
     }
     case "PermissionRequest":

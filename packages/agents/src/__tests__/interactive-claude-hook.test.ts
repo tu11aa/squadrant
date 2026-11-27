@@ -566,14 +566,12 @@ describe("mapClaudeHookToEvent Notification notification_type (#760)", () => {
     expect((ev as any).question).toBe("need input");
   });
 
-  it("notification_type=idle_prompt → task.progress (liveness only, never blocked)", () => {
-    const ev = mapClaudeHookToEvent("Notification", { message: "Claude is thinking", notification_type: "idle_prompt" }, TID);
-    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  it("notification_type=idle_prompt → null, no event (#1173: must not resume an idle crew)", () => {
+    expect(mapClaudeHookToEvent("Notification", { message: "Claude is waiting", notification_type: "idle_prompt" }, TID)).toBeNull();
   });
 
-  it("notification_type=quota_auto_resume_fired → task.progress (no dedicated source yet, never blocked)", () => {
-    const ev = mapClaudeHookToEvent("Notification", { message: "quota resumed", notification_type: "quota_auto_resume_fired" }, TID);
-    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  it("notification_type=quota_auto_resume_fired → null, no event", () => {
+    expect(mapClaudeHookToEvent("Notification", { message: "quota resumed", notification_type: "quota_auto_resume_fired" }, TID)).toBeNull();
   });
 
   it("missing notification_type (older client) falls back to substring detection — permission message still blocks", () => {
